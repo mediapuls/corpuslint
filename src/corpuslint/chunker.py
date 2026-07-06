@@ -42,7 +42,7 @@ def load_prechunked_jsonl(path: str) -> list[Chunk]:
         source = obj.get("source", path)
         chunks.append(
             Chunk(
-                id=obj.get("id", f"{source}#{i}") if obj.get("source") else f"{path}#{i}",
+                id=obj.get("id", f"{source}#{i}"),
                 text=obj["text"],
                 source=source,
                 index=i,

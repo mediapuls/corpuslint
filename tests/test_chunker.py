@@ -13,6 +13,14 @@ def test_chunk_documents_groups_paragraphs_to_target():
     assert len(chunks) >= 2
 
 
+def test_load_prechunked_jsonl_explicit_id_without_source(tmp_path: Path):
+    p = tmp_path / "d.jsonl"
+    p.write_text('{"text": "x", "id": "myid"}\n')
+    chunks = load_prechunked_jsonl(str(p))
+    assert chunks[0].id == "myid"
+    assert chunks[0].source == str(p)
+
+
 def test_load_prechunked_jsonl_fills_missing_fields(tmp_path: Path):
     p = tmp_path / "c.jsonl"
     p.write_text('{"text": "hello"}\n{"text": "world", "source": "s"}\n')

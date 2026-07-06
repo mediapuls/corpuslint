@@ -22,8 +22,13 @@ def main(
     html: str | None = typer.Option(None, "--html", help="write an HTML report to this path"),
     fail_under: int | None = typer.Option(None, "--fail-under"),
 ) -> None:
+    if llm:
+        raise typer.BadParameter(
+            "--llm needs an LLM backend, which the CLI does not yet provide. "
+            "Use the library API instead: analyze(paths, config, llm=your_client). "
+            "See the roadmap."
+        )
     cfg = load_config(config)
-    cfg.use_llm = llm
     if fail_under is not None:
         cfg.fail_under = fail_under
     emb = get_embedder(embedder, cfg)
