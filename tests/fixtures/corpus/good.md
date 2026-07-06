@@ -1,0 +1,1 @@
+Retrieval augmented generation combines search with generation to ground answers in your own documents. This paragraph is long enough to be a normal, healthy chunk with plenty of real information in it.

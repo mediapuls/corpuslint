@@ -1,4 +1,4 @@
-from corpuslint.models import Severity, Chunk, Finding, Report
+from corpuslint.models import Severity, Finding, Report
 
 
 def test_top_offenders_ranks_sources_by_finding_count():

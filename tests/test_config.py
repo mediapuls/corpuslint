@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from corpuslint.config import Config, load_config
+from corpuslint.config import load_config
 
 
 def test_defaults_when_no_file():
