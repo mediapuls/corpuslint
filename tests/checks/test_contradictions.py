@@ -30,3 +30,15 @@ def test_flags_when_llm_says_yes():
 
 def test_no_flag_when_llm_says_no():
     assert ContradictionsCheck().run(_ctx(True, StubLLM("NO"))) == []
+
+
+def test_chunk_text_with_braces_does_not_crash():
+    """Regression: chunk text containing { } (code, JSON, templates) should not crash format()."""
+    chunks = [
+        Chunk("0", "config uses {timeout: 30}", "s"),
+        Chunk("1", "config uses {timeout: 60}", "s"),
+    ]
+    embeddings = [[1.0, 0.0], [0.99, 0.1]]
+    ctx = CheckContext(chunks, embeddings, Config(use_llm=True), llm=StubLLM("NO"))
+    findings = ContradictionsCheck().run(ctx)
+    assert findings == []

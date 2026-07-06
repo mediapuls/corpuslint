@@ -4,10 +4,10 @@ from ..models import Finding, Severity
 from ..similarity import cosine_matrix
 from .base import CheckContext, register
 
-_PROMPT = (
+_PROMPT_HEADER = (
     "You are checking a knowledge base for contradictions.\n"
     "Do these two passages state facts that directly contradict each other?\n"
-    "Answer with exactly YES or NO.\n\nPassage A:\n{a}\n\nPassage B:\n{b}\n"
+    "Answer with exactly YES or NO."
 )
 
 
@@ -26,7 +26,10 @@ class ContradictionsCheck:
             for j in range(i + 1, n):
                 if sims[i, j] < related:
                     continue
-                answer = ctx.llm.complete(_PROMPT.format(a=chunks[i].text, b=chunks[j].text))
+                prompt = (
+                    f"{_PROMPT_HEADER}\n\nPassage A:\n{chunks[i].text}\n\nPassage B:\n{chunks[j].text}\n"
+                )
+                answer = ctx.llm.complete(prompt)
                 if answer.strip().upper().startswith("YES"):
                     findings.append(
                         Finding(
