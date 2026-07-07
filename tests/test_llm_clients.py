@@ -75,6 +75,20 @@ def test_openai_selected_with_default_model(monkeypatch):
     assert call["temperature"] == 0
 
 
+def test_complete_sends_prompt_as_generic_user_message(monkeypatch):
+    _install_fake_openai(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    client = get_llm_client("openai", "")
+    client.complete("FULL PROMPT HERE")
+    messages = _FakeOpenAI.instances[0].calls[0]["messages"]
+    user = [m for m in messages if m["role"] == "user"]
+    assert len(user) == 1
+    assert user[0]["content"] == "FULL PROMPT HERE"
+    # the client is generic — it must NOT bake the contradiction task into the request
+    joined = " ".join(m["content"] for m in messages).lower()
+    assert "contradiction" not in joined
+
+
 def test_openai_missing_key_raises(monkeypatch):
     _install_fake_openai(monkeypatch)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

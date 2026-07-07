@@ -7,10 +7,9 @@ from .llm import LLMClient
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_AZURE_API_VERSION = "2024-10-21"
 
-_SYSTEM_PROMPT = (
-    "You are checking a knowledge base for contradictions. "
-    "Answer with exactly YES or NO."
-)
+# Generic, task-agnostic system prompt. The actual task (e.g. contradiction
+# detection) lives in the caller's prompt, keeping this client reusable.
+_DEFAULT_SYSTEM_PROMPT = "You are a precise assistant. Follow the user's instructions exactly."
 
 
 class LLMClientError(RuntimeError):
@@ -18,18 +17,19 @@ class LLMClientError(RuntimeError):
 
 
 class _OpenAIChatClient:
-    """Thin wrapper turning an openai (or Azure) client into the LLMClient Protocol."""
+    """Generic wrapper turning an openai (or Azure) client into the LLMClient Protocol."""
 
-    def __init__(self, client: object, model: str) -> None:
+    def __init__(self, client: object, model: str, system_prompt: str = _DEFAULT_SYSTEM_PROMPT) -> None:
         self._client = client
         self._model = model
+        self._system_prompt = system_prompt
 
     def complete(self, prompt: str) -> str:
         response = self._client.chat.completions.create(
             model=self._model,
             temperature=0,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": self._system_prompt},
                 {"role": "user", "content": prompt},
             ],
         )
