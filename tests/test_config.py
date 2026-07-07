@@ -32,3 +32,21 @@ def test_llm_yaml_overrides(tmp_path: Path):
     assert cfg.llm_provider == "azure"
     assert cfg.llm_model == "my-deployment"
     assert cfg.llm_max_pairs == 50
+
+
+def test_source_defaults():
+    cfg = load_config(None)
+    assert cfg.source == "files"
+    assert cfg.index == ""
+    assert cfg.content_field == "content"
+    assert cfg.id_field == "id"
+
+
+def test_source_yaml_overrides(tmp_path: Path):
+    p = tmp_path / ".corpuslint.yml"
+    p.write_text("source: azure-search\nindex: kb\ncontent_field: body\nid_field: key\n")
+    cfg = load_config(str(p))
+    assert cfg.source == "azure-search"
+    assert cfg.index == "kb"
+    assert cfg.content_field == "body"
+    assert cfg.id_field == "key"

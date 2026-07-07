@@ -18,6 +18,7 @@ to fix.
 pip install corpuslint            # core, runs offline and free
 pip install "corpuslint[local]"   # + local embeddings (near-dupes, outliers)
 pip install "corpuslint[llm]"     # + LLM contradiction check (OpenAI / Azure OpenAI)
+pip install "corpuslint[azure]"   # + Azure AI Search source connector
 ```
 
 ## Use
@@ -44,6 +45,30 @@ The contradiction check is O(n²): it prefilters candidate pairs by embedding
 similarity, then asks the LLM about each. `--llm-max-pairs` bounds how many pairs
 reach the LLM (highest-similarity first) so cost stays predictable; skipped pairs
 are reported (`--llm-max-pairs 0` skips the LLM entirely).
+
+## Sources
+
+By default corpuslint reads files and directories. It can also pull the corpus
+straight from a vector store and run the same checks on it.
+
+### Azure AI Search
+Needs the `[azure]` extra. Reads the endpoint and admin/query key from the
+environment; the index is passed with `--index`:
+
+```bash
+pip install "corpuslint[azure]"
+export AZURE_SEARCH_ENDPOINT=https://<service>.search.windows.net
+export AZURE_SEARCH_API_KEY=<key>
+
+corpuslint --source azure-search --index my-index
+corpuslint --source azure-search --index my-index --content-field body --id-field key
+```
+
+It pages through **every** document in the index (no silent cap), maps each to a
+document whose source is `azure-search://<index>/<id>`, and feeds them through the
+normal chunking + check pipeline. `--content-field` (default `content`) selects the
+field holding the text; `--id-field` (default `id`) selects the id field. Documents
+missing the content field are skipped with a warning.
 
 ## Checks
 exact duplicates · near duplicates · low-information chunks · chunk-size

@@ -5,7 +5,7 @@ from .checks.base import CheckContext, get_enabled_checks
 from .chunker import chunk_documents, load_prechunked_jsonl
 from .config import Config
 from .loader import load_documents
-from .models import Chunk, Report
+from .models import Chunk, Document, Report
 from .scoring import compute_score
 
 
@@ -20,8 +20,19 @@ def _collect_chunks(paths: list[str], config: Config) -> list[Chunk]:
     return chunks
 
 
-def analyze(paths: list[str], config: Config, embedder=None, llm=None) -> Report:
-    chunks = _collect_chunks(paths, config)
+def analyze(
+    paths: list[str],
+    config: Config,
+    embedder=None,
+    llm=None,
+    documents: list[Document] | None = None,
+) -> Report:
+    # A source connector (e.g. Azure AI Search) passes documents directly; they
+    # go through the same chunking + check pipeline as loaded files.
+    if documents is not None:
+        chunks = chunk_documents(documents, config)
+    else:
+        chunks = _collect_chunks(paths, config)
     embeddings = embedder.embed([c.text for c in chunks]) if embedder and chunks else None
     ctx = CheckContext(chunks=chunks, embeddings=embeddings, config=config, llm=llm)
     findings = []

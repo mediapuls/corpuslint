@@ -2,6 +2,8 @@ from pathlib import Path
 from typer.testing import CliRunner
 from corpuslint.cli import app
 from corpuslint.llm_clients import LLMClientError
+from corpuslint.models import Document
+from corpuslint.sources.azure_search import AzureSearchError
 
 runner = CliRunner()
 
@@ -91,6 +93,67 @@ def test_cli_llm_extra_flags_forwarded(tmp_path: Path, monkeypatch):
     assert "BadParameter" not in result.output
     assert captured.get("provider") == "azure"
     assert captured.get("model") == "gpt-4-deployment"
+
+
+def test_cli_azure_source_end_to_end_flags_duplicates(monkeypatch):
+    docs = [
+        Document(text="Refunds take 5 days.", source="azure-search://kb/1"),
+        Document(text="Refunds take 5 days.", source="azure-search://kb/2"),
+    ]
+    monkeypatch.setattr("corpuslint.cli.load_azure_documents", lambda index, cfg: docs)
+    result = runner.invoke(app, ["--source", "azure-search", "--index", "kb", "--embedder", "none"])
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    assert "duplicate" in result.output.lower()
+
+
+def test_cli_azure_requires_index(monkeypatch):
+    monkeypatch.setattr("corpuslint.cli.load_azure_documents", lambda index, cfg: [])
+    result = runner.invoke(app, ["--source", "azure-search", "--embedder", "none"])
+    assert result.exit_code != 0
+    assert "index" in result.output.lower()
+    assert "Traceback" not in result.output
+
+
+def test_cli_azure_connector_error_is_clean(monkeypatch):
+    def _boom(index, cfg):
+        raise AzureSearchError("AZURE_SEARCH_ENDPOINT is not set.")
+
+    monkeypatch.setattr("corpuslint.cli.load_azure_documents", _boom)
+    result = runner.invoke(app, ["--source", "azure-search", "--index", "kb", "--embedder", "none"])
+    assert result.exit_code == 1
+    assert "AZURE_SEARCH_ENDPOINT" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_azure_forwards_field_config(monkeypatch):
+    captured: dict = {}
+
+    def _capture(index, cfg):
+        captured["index"] = index
+        captured["content_field"] = cfg.content_field
+        captured["id_field"] = cfg.id_field
+        return [Document(text="hi", source="azure-search://kb/1")]
+
+    monkeypatch.setattr("corpuslint.cli.load_azure_documents", _capture)
+    result = runner.invoke(
+        app,
+        [
+            "--source", "azure-search",
+            "--index", "kb",
+            "--content-field", "body",
+            "--id-field", "key",
+            "--embedder", "none",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured == {"index": "kb", "content_field": "body", "id_field": "key"}
+
+
+def test_cli_files_source_requires_paths():
+    result = runner.invoke(app, ["--embedder", "none"])
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
 
 
 def test_cli_json_output_and_fail_under(tmp_path: Path):
