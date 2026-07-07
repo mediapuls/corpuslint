@@ -30,8 +30,18 @@ def test_cli_llm_backend_error_is_clean(tmp_path: Path, monkeypatch):
         ),
     )
     result = runner.invoke(app, [str(tmp_path), "--llm"])
-    assert result.exit_code != 0
+    assert result.exit_code == 1
     assert "OPENAI_API_KEY" in result.output
+    assert "Traceback" not in result.output
+    # a missing env var is a config error, not a bad CLI argument
+    assert "Invalid value" not in result.output
+
+
+def test_cli_invalid_provider_is_clean(tmp_path: Path):
+    (tmp_path / "a.md").write_text("hello world")
+    result = runner.invoke(app, [str(tmp_path), "--llm", "--llm-provider", "cohere"])
+    assert result.exit_code != 0
+    assert "cohere" in result.output.lower()
     assert "Traceback" not in result.output
 
 

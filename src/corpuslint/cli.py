@@ -19,9 +19,16 @@ def main(
     config: str | None = typer.Option(None, "--config"),
     embedder: str = typer.Option("local", "--embedder", help="local | none"),
     llm: bool = typer.Option(False, "--llm", help="enable the LLM contradiction check"),
-    llm_provider: str = typer.Option("openai", "--llm-provider", help="openai | azure"),
+    llm_provider: str = typer.Option(
+        "openai",
+        "--llm-provider",
+        help="openai | azure. azure reads AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, "
+        "AZURE_OPENAI_API_VERSION (default 2024-10-21) from the environment.",
+    ),
     llm_model: str = typer.Option("", "--llm-model", help="model name (or Azure deployment); blank = provider default"),
-    llm_max_pairs: int | None = typer.Option(None, "--llm-max-pairs", help="cap LLM contradiction calls (cost guard)"),
+    llm_max_pairs: int | None = typer.Option(
+        None, "--llm-max-pairs", help="cap LLM contradiction calls, cost guard (0 = skip all pairs)"
+    ),
     json_out: bool = typer.Option(False, "--json"),
     html: str | None = typer.Option(None, "--html", help="write an HTML report to this path"),
     fail_under: int | None = typer.Option(None, "--fail-under"),
@@ -32,6 +39,11 @@ def main(
 
     llm_client = None
     if llm:
+        if llm_provider not in ("openai", "azure"):
+            raise typer.BadParameter(
+                f"unknown provider {llm_provider!r} (expected 'openai' or 'azure')",
+                param_hint="--llm-provider",
+            )
         cfg.use_llm = True
         cfg.llm_provider = llm_provider
         cfg.llm_model = llm_model
@@ -40,7 +52,9 @@ def main(
         try:
             llm_client = get_llm_client(cfg.llm_provider, cfg.llm_model)
         except LLMClientError as e:
-            raise typer.BadParameter(str(e)) from e
+            # Missing extra / env var is a configuration problem, not a bad CLI argument.
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
 
     emb = get_embedder(embedder, cfg)
     report = analyze(paths, cfg, embedder=emb, llm=llm_client)
