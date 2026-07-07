@@ -9,14 +9,27 @@ from .config import load_config
 from .embedder import get_embedder
 from .llm_clients import LLMClientError, get_llm_client
 from .report import render_html, render_json, render_terminal
+from .sources.azure_search import AzureSearchError, load_azure_documents
 
 app = typer.Typer(add_completion=False, help="A linter for your RAG knowledge base.")
 
 
 @app.command()
 def main(
-    paths: list[str] = typer.Argument(..., help="Files or directories (or .jsonl of pre-chunked data)."),
+    paths: list[str] = typer.Argument(
+        None, help="Files or directories (or .jsonl of pre-chunked data). Optional with --source azure-search."
+    ),
     config: str | None = typer.Option(None, "--config"),
+    source: str | None = typer.Option(
+        None, "--source", help="files | azure-search (default: files)"
+    ),
+    index: str | None = typer.Option(None, "--index", help="Azure AI Search index name (with --source azure-search)"),
+    content_field: str | None = typer.Option(
+        None, "--content-field", help="Azure field holding the document text (default: content)"
+    ),
+    id_field: str | None = typer.Option(
+        None, "--id-field", help="Azure field holding the document id (default: id)"
+    ),
     embedder: str = typer.Option("local", "--embedder", help="local | none"),
     llm: bool = typer.Option(False, "--llm", help="enable the LLM contradiction check"),
     llm_provider: str = typer.Option(
@@ -36,6 +49,15 @@ def main(
     cfg = load_config(config)
     if fail_under is not None:
         cfg.fail_under = fail_under
+    # CLI flags override .corpuslint.yml only when explicitly passed.
+    if source is not None:
+        cfg.source = source
+    if index is not None:
+        cfg.index = index
+    if content_field is not None:
+        cfg.content_field = content_field
+    if id_field is not None:
+        cfg.id_field = id_field
 
     llm_client = None
     if llm:
@@ -57,7 +79,27 @@ def main(
             raise typer.Exit(1) from e
 
     emb = get_embedder(embedder, cfg)
-    report = analyze(paths, cfg, embedder=emb, llm=llm_client)
+
+    if cfg.source == "azure-search":
+        if not cfg.index:
+            raise typer.BadParameter(
+                "--index is required with --source azure-search", param_hint="--index"
+            )
+        try:
+            documents = load_azure_documents(cfg.index, cfg)
+        except AzureSearchError as e:
+            # Missing extra / env var / SDK failure is a config problem, not a bad CLI argument.
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
+        report = analyze([], cfg, embedder=emb, llm=llm_client, documents=documents)
+    elif cfg.source == "files":
+        if not paths:
+            raise typer.BadParameter("provide files or directories to check (or use --source azure-search)")
+        report = analyze(paths, cfg, embedder=emb, llm=llm_client)
+    else:
+        raise typer.BadParameter(
+            f"unknown source {cfg.source!r} (expected 'files' or 'azure-search')", param_hint="--source"
+        )
 
     if json_out:
         typer.echo(render_json(report))
