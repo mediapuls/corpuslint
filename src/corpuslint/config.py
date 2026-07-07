@@ -36,6 +36,10 @@ class Config:
     llm_provider: str = "openai"
     llm_model: str = ""
     llm_max_pairs: int = 200
+    source: str = "files"
+    index: str = ""
+    content_field: str = "content"
+    id_field: str = "id"
     fail_under: int | None = None
     enabled_checks: list[str] = field(default_factory=lambda: list(ALL_CHECKS))
     weights: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
