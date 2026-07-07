@@ -33,6 +33,9 @@ class Config:
     outlier_zscore: float = 3.0
     target_chunk_tokens: int = 300
     use_llm: bool = False
+    llm_provider: str = "openai"
+    llm_model: str = ""
+    llm_max_pairs: int = 200
     fail_under: int | None = None
     enabled_checks: list[str] = field(default_factory=lambda: list(ALL_CHECKS))
     weights: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
