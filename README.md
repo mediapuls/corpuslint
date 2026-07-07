@@ -29,14 +29,17 @@ corpuslint ./docs --llm                             # OpenAI, default gpt-4o-min
 corpuslint ./docs --llm --llm-model gpt-4o          # pick a model
 corpuslint ./docs --llm --llm-max-pairs 50          # cap paid calls (default 200)
 
-# Azure OpenAI (AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT):
+# Azure OpenAI — reads AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT and
+# AZURE_OPENAI_API_VERSION (default 2024-10-21) from the environment.
+# --llm-model is the Azure *deployment* name.
+export AZURE_OPENAI_API_KEY=...  AZURE_OPENAI_ENDPOINT=https://<res>.openai.azure.com
 corpuslint ./docs --llm --llm-provider azure --llm-model my-deployment
 ```
 
 The contradiction check is O(n²): it prefilters candidate pairs by embedding
 similarity, then asks the LLM about each. `--llm-max-pairs` bounds how many pairs
 reach the LLM (highest-similarity first) so cost stays predictable; skipped pairs
-are reported.
+are reported (`--llm-max-pairs 0` skips the LLM entirely).
 
 ## Checks
 exact duplicates · near duplicates · low-information chunks · chunk-size
