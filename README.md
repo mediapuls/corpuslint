@@ -13,6 +13,7 @@ to fix.
 ```bash
 pip install corpuslint            # core, runs offline and free
 pip install "corpuslint[local]"   # + local embeddings (near-dupes, outliers)
+pip install "corpuslint[llm]"     # + LLM contradiction check (OpenAI / Azure OpenAI)
 ```
 
 ## Use
@@ -21,10 +22,21 @@ corpuslint ./docs                       # terminal report
 corpuslint ./docs --html report.html    # shareable HTML
 corpuslint ./docs --fail-under 70       # CI gate (exit 1 if score < 70)
 corpuslint ./chunks.jsonl               # pre-chunked input
-                                        # LLM contradiction check: library API only
-                                        #   analyze(paths, config, llm=your_client)
-                                        #   CLI backend on the roadmap
+
+# LLM contradiction check (needs the [llm] extra + an API key):
+export OPENAI_API_KEY=sk-...
+corpuslint ./docs --llm                             # OpenAI, default gpt-4o-mini
+corpuslint ./docs --llm --llm-model gpt-4o          # pick a model
+corpuslint ./docs --llm --llm-max-pairs 50          # cap paid calls (default 200)
+
+# Azure OpenAI (AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT):
+corpuslint ./docs --llm --llm-provider azure --llm-model my-deployment
 ```
+
+The contradiction check is O(n²): it prefilters candidate pairs by embedding
+similarity, then asks the LLM about each. `--llm-max-pairs` bounds how many pairs
+reach the LLM (highest-similarity first) so cost stays predictable; skipped pairs
+are reported.
 
 ## Checks
 exact duplicates · near duplicates · low-information chunks · chunk-size
