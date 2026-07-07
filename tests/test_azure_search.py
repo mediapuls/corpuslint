@@ -146,3 +146,25 @@ def test_error_does_not_leak_api_key_value(monkeypatch):
     with pytest.raises(AzureSearchError) as exc:
         load_azure_documents("kb", _cfg())
     assert "super-secret-value" not in str(exc.value)
+
+
+# ---- base install isolation -------------------------------------------------
+
+
+def test_base_import_unaffected_when_azure_sdk_absent(monkeypatch):
+    """Importing corpuslint must not require azure-search-documents at module level.
+
+    The SDK is imported lazily inside _import_sdk(); top-level module import
+    must succeed even when the azure extra is not installed.
+    """
+    # Drop the cached module so Python re-executes it from source.
+    monkeypatch.delitem(sys.modules, "corpuslint.sources.azure_search", raising=False)
+    # Simulate the azure packages being absent.
+    monkeypatch.setitem(sys.modules, "azure.search.documents", None)
+    monkeypatch.setitem(sys.modules, "azure.core.credentials", None)
+
+    # Re-importing the module must not raise.
+    import corpuslint.sources.azure_search as mod
+
+    assert callable(mod.load_azure_documents)
+    assert issubclass(mod.AzureSearchError, RuntimeError)
