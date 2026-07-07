@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import warnings
 
 from ..config import Config
@@ -40,6 +41,24 @@ def _read_credentials() -> tuple[str, str]:
     return endpoint, api_key
 
 
+def _select_fields(config: Config) -> list[str]:
+    """Ordered-unique list of fields to fetch: content, id, and the id fallbacks.
+
+    Restricting the query to these keeps embedding vectors (often the bulk of a
+    document) out of the response. ``@``-prefixed names are system annotations —
+    not selectable fields, returned regardless — so they are excluded here while
+    still being honoured by the read-time fallback chain.
+    """
+    seen: set[str] = set()
+    fields: list[str] = []
+    for name in (config.content_field, config.id_field, *_ID_FALLBACKS):
+        if not name or name.startswith("@") or name in seen:
+            continue
+        seen.add(name)
+        fields.append(name)
+    return fields
+
+
 def _doc_id(item, id_field: str, fallback: int) -> str:
     if id_field and item.get(id_field) is not None:
         return str(item.get(id_field))
@@ -58,7 +77,7 @@ def _documents_from_client(client, index: str, config: Config) -> list[Document]
     content_field = config.content_field
     docs: list[Document] = []
     position = 0
-    for page in client.search(search_text="*").by_page():
+    for page in client.search(search_text="*", select=_select_fields(config)).by_page():
         for item in page:
             content = item.get(content_field)
             if content is None:
@@ -82,4 +101,8 @@ def load_azure_documents(index: str, config: Config) -> list[Document]:
         index_name=index,
         credential=AzureKeyCredential(api_key),
     )
-    return _documents_from_client(client, index, config)
+    docs = _documents_from_client(client, index, config)
+    # Report the count on stderr (keeps stdout/--json clean) to back up the
+    # "pages through everything, no silent cap" guarantee.
+    print(f"fetched {len(docs)} documents from index {index!r}", file=sys.stderr)
+    return docs

@@ -58,6 +58,25 @@ def test_paginates_over_all_pages_dropping_nothing():
     assert client.search_kwargs["search_text"] == "*"
 
 
+def test_search_selects_only_needed_fields_including_id_fallbacks():
+    # Default config: content + id, plus the selectable fallbacks. This keeps the
+    # request from dragging back embedding vectors we never use, while still
+    # fetching the fields the fallback-id chain reads.
+    client = _FakeSearchClient([[{"id": "1", "content": "x"}]])
+    _documents_from_client(client, "kb", _cfg())
+    assert client.search_kwargs["select"] == ["content", "id", "key"]
+
+
+def test_search_select_dedupes_and_honours_custom_fields():
+    client = _FakeSearchClient([[{"key": "1", "body": "x"}]])
+    _documents_from_client(client, "kb", _cfg(content_field="body", id_field="key"))
+    # ordered-unique: content, id field, then remaining fallbacks; "@"-prefixed
+    # system annotations (e.g. @search.documentKey) are not selectable, so excluded.
+    select = client.search_kwargs["select"]
+    assert select == ["body", "key", "id"]
+    assert all(not f.startswith("@") for f in select)
+
+
 def test_maps_content_and_id_from_configured_fields():
     pages = [[{"key": "abc", "body": "hello world"}]]
     client = _FakeSearchClient(pages)
@@ -98,7 +117,7 @@ def _install_fake_sdk(monkeypatch, pages: list[list[dict]] | None = None):
     monkeypatch.setitem(sys.modules, "azure.core.credentials", cred_mod)
 
 
-def test_load_reads_env_and_searches_wildcard(monkeypatch):
+def test_load_reads_env_and_searches_wildcard(monkeypatch, capsys):
     pages = [[{"id": "1", "content": "hi"}]]
     _install_fake_sdk(monkeypatch, pages)
     monkeypatch.setenv("AZURE_SEARCH_ENDPOINT", "https://svc.search.windows.net")
@@ -109,6 +128,10 @@ def test_load_reads_env_and_searches_wildcard(monkeypatch):
     assert client.init_kwargs["endpoint"] == "https://svc.search.windows.net"
     assert client.init_kwargs["index_name"] == "kb"
     assert client.init_kwargs["credential"] == {"key": "secret-key"}
+    # count is reported on stderr, not stdout (keeps --json output clean)
+    captured = capsys.readouterr()
+    assert "fetched 1 documents from index 'kb'" in captured.err
+    assert captured.out == ""
 
 
 def test_missing_extra_raises_install_hint(monkeypatch):
