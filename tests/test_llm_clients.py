@@ -105,8 +105,31 @@ def test_azure_missing_endpoint_raises(monkeypatch):
     assert "AZURE_OPENAI_ENDPOINT" in str(exc.value)
 
 
+def test_azure_missing_api_key_raises(monkeypatch):
+    _install_fake_openai(monkeypatch)
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
+    with pytest.raises(LLMClientError) as exc:
+        get_llm_client("azure", "my-deployment")
+    assert "AZURE_OPENAI_API_KEY" in str(exc.value)
+
+
 def test_unknown_provider_raises(monkeypatch):
     _install_fake_openai(monkeypatch)
     with pytest.raises(LLMClientError) as exc:
         get_llm_client("cohere", "")
     assert "cohere" in str(exc.value)
+
+
+def test_base_import_does_not_eagerly_import_openai(monkeypatch):
+    """llm_clients must not import openai at module level — only inside get_llm_client."""
+    import importlib
+    import corpuslint.llm_clients as mod
+
+    # Mark openai as absent, then reload the module to re-run its top-level code.
+    monkeypatch.setitem(sys.modules, "openai", None)
+    importlib.reload(mod)
+
+    # Module-level reload must not crash; the factory function must still be callable.
+    assert callable(mod.get_llm_client)
+    assert callable(mod.LLMClientError)

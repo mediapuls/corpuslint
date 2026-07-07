@@ -51,6 +51,38 @@ def test_cli_no_llm_flag_exits_zero(tmp_path: Path):
     assert result.exit_code == 0
 
 
+def test_cli_llm_extra_flags_forwarded(tmp_path: Path, monkeypatch):
+    """--llm-provider, --llm-model, --llm-max-pairs must be parsed and forwarded to get_llm_client."""
+    (tmp_path / "a.md").write_text("The refund window is 5 days.")
+    (tmp_path / "b.md").write_text("The refund window is 30 days.")
+
+    captured: dict = {}
+
+    def _fake_get_llm_client(provider: str, model: str):
+        captured["provider"] = provider
+        captured["model"] = model
+        return _StubLLM("NO")
+
+    monkeypatch.setattr("corpuslint.cli.get_llm_client", _fake_get_llm_client)
+    monkeypatch.setattr("corpuslint.cli.get_embedder", lambda name, cfg: _AllSameEmbedder())
+
+    result = runner.invoke(
+        app,
+        [
+            str(tmp_path),
+            "--llm",
+            "--llm-provider", "azure",
+            "--llm-model", "gpt-4-deployment",
+            "--llm-max-pairs", "7",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "BadParameter" not in result.output
+    assert captured.get("provider") == "azure"
+    assert captured.get("model") == "gpt-4-deployment"
+
+
 def test_cli_json_output_and_fail_under(tmp_path: Path):
     (tmp_path / "a.md").write_text("Cats are great pets.")
     (tmp_path / "b.md").write_text("Cats are great pets.")

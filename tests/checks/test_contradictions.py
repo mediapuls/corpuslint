@@ -70,6 +70,41 @@ def test_no_warning_when_under_cap(capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_cost_cap_selects_highest_similarity_pair_first(capsys):
+    """With cap=1, the single evaluated pair must be the one with the highest cosine similarity."""
+    # Embeddings chosen so pair (0,1) is most similar, (0,2) and (1,2) are above the
+    # prefilter threshold but clearly less similar.
+    chunks = [
+        Chunk("0", "passage-alpha", "s"),
+        Chunk("1", "passage-beta", "s"),
+        Chunk("2", "passage-gamma", "s"),
+    ]
+    embeddings = [
+        [1.0, 0.0],        # chunk 0
+        [0.9999, 0.01],    # chunk 1 — cosine ~1.000 with chunk 0
+        [0.82, 0.57],      # chunk 2 — cosine ~0.82 with chunk 0
+    ]
+
+    class RecordingLLM:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def complete(self, prompt: str) -> str:
+            self.prompts.append(prompt)
+            return "NO"
+
+    llm = RecordingLLM()
+    cfg = Config(use_llm=True, llm_max_pairs=1)
+    ctx = CheckContext(chunks, embeddings, cfg, llm=llm)
+    ContradictionsCheck().run(ctx)
+
+    assert len(llm.prompts) == 1  # cap honoured
+    # The highest-similarity pair is (0, 1); both their texts must appear in the prompt.
+    assert "passage-alpha" in llm.prompts[0]
+    assert "passage-beta" in llm.prompts[0]
+    assert "passage-gamma" not in llm.prompts[0]
+
+
 def test_chunk_text_with_braces_does_not_crash():
     """Regression: chunk text containing { } (code, JSON, templates) should not crash format()."""
     chunks = [
