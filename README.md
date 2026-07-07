@@ -1,5 +1,9 @@
 # corpuslint
 
+[![PyPI version](https://img.shields.io/pypi/v/corpuslint.svg)](https://pypi.org/project/corpuslint/)
+[![Python versions](https://img.shields.io/pypi/pyversions/corpuslint.svg)](https://pypi.org/project/corpuslint/)
+[![License: MIT](https://img.shields.io/pypi/l/corpuslint.svg)](https://github.com/mediapuls/corpuslint/blob/main/LICENSE)
+
 **A linter for your RAG knowledge base.** RAGAS & co. evaluate the *answer*.
 `corpuslint` evaluates the *data* that feeds it — before it reaches your users.
 
