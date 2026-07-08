@@ -254,6 +254,57 @@ def test_cli_confluence_missing_creds_is_clean(monkeypatch):
     assert "Traceback" not in result.output
 
 
+def test_cli_notion_source_end_to_end_flags_duplicates(monkeypatch):
+    """--source notion with the HTTP layer stubbed runs the whole pipeline."""
+    monkeypatch.setenv("NOTION_TOKEN", "tok")
+
+    def _fake_http(url, token, method="GET", payload=None):
+        if "/query" in url:
+            return {
+                "results": [
+                    {"id": "1", "url": "https://notion.so/1",
+                     "properties": {"Name": {"type": "title", "title": [{"plain_text": "Refunds"}]}}},
+                    {"id": "2", "url": "https://notion.so/2",
+                     "properties": {"Name": {"type": "title", "title": [{"plain_text": "Refunds"}]}}},
+                ],
+                "has_more": False,
+                "next_cursor": None,
+            }
+        return {
+            "results": [{"id": "b", "type": "paragraph", "has_children": False,
+                         "paragraph": {"rich_text": [{"plain_text": "Refunds take 5 days."}]}}],
+            "has_more": False,
+            "next_cursor": None,
+        }
+
+    monkeypatch.setattr("corpuslint.sources.notion._http_request_json", _fake_http)
+    result = runner.invoke(
+        app,
+        ["--source", "notion", "--source-opt", "database_id=db-1", "--embedder", "none"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    assert "duplicate" in result.output.lower()
+
+
+def test_cli_notion_requires_database_id():
+    result = runner.invoke(app, ["--source", "notion", "--embedder", "none"])
+    assert result.exit_code == 1
+    assert "database" in result.output.lower()
+    assert "Traceback" not in result.output
+
+
+def test_cli_notion_missing_token_is_clean(monkeypatch):
+    monkeypatch.delenv("NOTION_TOKEN", raising=False)
+    result = runner.invoke(
+        app,
+        ["--source", "notion", "--source-opt", "database_id=db-1", "--embedder", "none"],
+    )
+    assert result.exit_code == 1
+    assert "NOTION_TOKEN" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_cli_unknown_source_is_clean():
     result = runner.invoke(app, ["--source", "bogus", "--embedder", "none"])
     assert result.exit_code != 0
