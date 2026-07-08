@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from corpuslint import mcp_server
-from corpuslint.embedder import EmbedderUnavailable
 
 _DUPLICATE_PARAGRAPH = (
     "Our refund policy allows customers to request a full refund within thirty days "
@@ -76,19 +75,14 @@ def test_local_falls_back_to_none_when_embedder_returns_none(tmp_path: Path, mon
     assert result["counts_by_check"].get("exact_duplicates", 0) >= 1
 
 
-def test_local_falls_back_when_embedder_raises_unavailable(tmp_path: Path, monkeypatch):
-    def _raise(name, cfg):
-        raise EmbedderUnavailable("no sentence-transformers")
-
-    monkeypatch.setattr(mcp_server, "get_embedder", _raise)
-    result = mcp_server.lint_corpus(_corpus_with_duplicate(tmp_path), embedder="local")
-
-    assert "warning" in result
-    assert "corpuslint[local]" in result["warning"]
-    assert result["score"] < 100
-
-
 # ---- bad input --------------------------------------------------------------
+
+
+def test_invalid_embedder_returns_clean_error(tmp_path: Path):
+    result = mcp_server.lint_corpus(_corpus_with_duplicate(tmp_path), embedder="bogus")
+    assert "error" in result
+    assert "score" not in result
+    assert "bogus" in result["error"]
 
 
 def test_missing_path_returns_clean_error(tmp_path: Path):

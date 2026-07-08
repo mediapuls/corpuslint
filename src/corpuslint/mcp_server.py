@@ -12,9 +12,10 @@ import os
 
 from .analyze import analyze
 from .config import load_config
-from .embedder import EmbedderUnavailable, get_embedder
+from .embedder import get_embedder
 from .report import render_json
 
+_VALID_EMBEDDERS = ("local", "none")
 _MCP_INSTALL_HINT = 'The corpuslint MCP server needs the optional extra: pip install "corpuslint[mcp]"'
 _LOCAL_WARNING = (
     "The 'local' embedder is unavailable (sentence-transformers not installed), so "
@@ -38,6 +39,8 @@ def lint_corpus(path: str, embedder: str = "local", fail_under: int | None = Non
     returns `{"error": "..."}` instead. If "local" is requested but unavailable,
     it falls back to "none" and adds a `warning` explaining how to enable it.
     """
+    if embedder not in _VALID_EMBEDDERS:
+        return {"error": f"unknown embedder {embedder!r}, use 'local' or 'none'"}
     if not os.path.exists(path):
         return {"error": f"path not found: {path!r}"}
     if not os.access(path, os.R_OK):
@@ -47,14 +50,10 @@ def lint_corpus(path: str, embedder: str = "local", fail_under: int | None = Non
     if fail_under is not None:
         cfg.fail_under = fail_under
 
-    warning: str | None = None
-    try:
-        emb = get_embedder(embedder, cfg)
-    except EmbedderUnavailable:
-        emb = None
-    # get_embedder returns None for "local" when sentence-transformers is missing.
-    if embedder == "local" and emb is None:
-        warning = _LOCAL_WARNING
+    # get_embedder returns None for "local" when sentence-transformers is missing;
+    # fall back to no embeddings (semantic checks skipped) with a warning.
+    emb = get_embedder(embedder, cfg)
+    warning = _LOCAL_WARNING if embedder == "local" and emb is None else None
 
     try:
         report = analyze([path], cfg, embedder=emb)
