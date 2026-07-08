@@ -6,13 +6,14 @@ import warnings
 
 from ..config import Config
 from ..models import Document
+from .base import SourceError, register
 
 # Tried in order when the configured id field is absent on a document, so a
 # document still gets a stable-ish source instead of being dropped.
 _ID_FALLBACKS = ("id", "key", "@search.documentKey")
 
 
-class AzureSearchError(RuntimeError):
+class AzureSearchError(SourceError):
     """Raised when the Azure AI Search source cannot run (missing extra, missing env)."""
 
 
@@ -106,3 +107,28 @@ def load_azure_documents(index: str, config: Config) -> list[Document]:
     # "pages through everything, no silent cap" guarantee.
     print(f"fetched {len(docs)} documents from index {index!r}", file=sys.stderr)
     return docs
+
+
+class AzureSearchSource:
+    name = "azure-search"
+
+    def load(self, config: Config) -> list[Document]:
+        # Options come from the generic source_options bag first, falling back to
+        # the dedicated legacy fields (--index / --content-field / --id-field).
+        opts = config.source_options
+        index = opts.get("index") or config.index
+        if not index:
+            raise SourceError(
+                "the azure-search source requires an index "
+                "(pass --index, --source-opt index=..., or set it in .corpuslint.yml)"
+            )
+        # Field overrides via source_options need no dedicated flag; they feed the
+        # same config load_azure_documents already reads.
+        if "content_field" in opts:
+            config.content_field = opts["content_field"]
+        if "id_field" in opts:
+            config.id_field = opts["id_field"]
+        return load_azure_documents(index, config)
+
+
+register(AzureSearchSource())

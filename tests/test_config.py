@@ -50,3 +50,16 @@ def test_source_yaml_overrides(tmp_path: Path):
     assert cfg.index == "kb"
     assert cfg.content_field == "body"
     assert cfg.id_field == "key"
+
+
+def test_source_options_default_empty():
+    cfg = load_config(None)
+    assert cfg.source_options == {}
+    assert cfg.paths == []
+
+
+def test_source_options_yaml_override(tmp_path: Path):
+    p = tmp_path / ".corpuslint.yml"
+    p.write_text("source: azure-search\nsource_options:\n  index: kb\n  content_field: body\n")
+    cfg = load_config(str(p))
+    assert cfg.source_options == {"index": "kb", "content_field": "body"}
