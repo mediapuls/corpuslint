@@ -111,6 +111,16 @@ def test_storage_format_macros_and_tables_stripped_to_readable_text():
     assert "Alice" in text
 
 
+def test_title_with_angle_brackets_is_kept_not_swallowed_as_a_tag():
+    # A raw '<' in the title would look like a tag to the HTML parser and the
+    # text between the brackets would vanish; the title must be escaped first.
+    api = _FakeApi([_page("1", "API <beta> guide", "<p>call the endpoint</p>")])
+    docs = _documents_from_source("https://x.atlassian.net", "S", api.fetch)
+    text = docs[0].text
+    assert "API <beta> guide" in text
+    assert "call the endpoint" in text
+
+
 # ---- empty-body handling ----------------------------------------------------
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import json
 import os
 import sys
@@ -102,7 +103,9 @@ def _documents_from_source(
                     stacklevel=2,
                 )
                 continue
-            text = html_to_text(f"<h1>{title}</h1>\n{body}")
+            # Escape the title so a literal '<' in it (e.g. "API <beta>") isn't
+            # swallowed as a tag by the HTML parser and lost from the text.
+            text = html_to_text(f"<h1>{html.escape(title)}</h1>\n{body}")
             docs.append(Document(text=text, source=_page_url(base_url, space, page_id)))
         if len(batch) < limit:
             break
