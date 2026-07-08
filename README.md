@@ -143,16 +143,24 @@ The crawler is bounded and polite by default:
 |---|---|---|
 | `depth` | `2` | crawl-mode link depth from the start URL |
 | `max_pages` | `200` | hard cap on pages fetched — never unbounded; a warning is emitted when the cap truncates the run |
-| `delay` | `0.5` | seconds between requests, so we don't hammer the site |
+| `delay` | `0.5` | seconds between requests, so we don't hammer the site. A robots.txt `Crawl-delay` raises this (the larger of the two wins) |
 
 Additional guardrails, always on:
-- **robots.txt is respected** — disallowed URLs are skipped (per-host, cached).
+- **robots.txt is respected** — disallowed URLs are skipped, and a `Crawl-delay`
+  directive is honored (per-host, cached). The delay applies to every fetch
+  attempt (including 404s and non-HTML) and between sitemap sub-files.
 - **Same-domain only** in crawl mode — external links are never followed.
 - **Deduped** visited URLs, **bounded depth**, URL fragments stripped.
 - **Non-HTML responses** (PDF, images, JSON) are skipped with a warning.
 - A per-page fetch error (404/timeout) skips that page and the run continues.
 - Requests send a `corpuslint/<version>` **User-Agent**.
 - Sitemaps carrying a `DOCTYPE`/entity declaration are refused (XXE / billion-laughs guard).
+
+**Not guarded — SSRF:** the crawler fetches whatever URLs you point it at and
+does **not** block internal, loopback, or private-range targets (e.g.
+`http://localhost/`, `http://169.254.169.254/`, `http://10.0.0.0/8` hosts). Only
+run it against docs sites you trust; don't feed it attacker-controlled start
+URLs or sitemaps. This is an accepted trade-off for a user-run CLI.
 
 ### Source options
 
