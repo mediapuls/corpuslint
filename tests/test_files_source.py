@@ -1,4 +1,7 @@
+import json
 from pathlib import Path
+
+import pytest
 
 from corpuslint.analyze import analyze
 from corpuslint.config import Config
@@ -37,3 +40,25 @@ def test_files_source_findings_parity_with_paths_route(tmp_path: Path):
 
     assert via_source.findings_by_check().keys() == via_paths.findings_by_check().keys()
     assert via_source.score == via_paths.score
+
+
+def test_files_source_skips_jsonl_paths_with_warning(tmp_path: Path):
+    """FilesSource.load() is the document-loading path; .jsonl files are pre-chunked
+    data that bypass it entirely (the CLI fast-path handles them in analyze()).
+    Confirm FilesSource.load() skips .jsonl AND warns, so a library caller doing
+    get_source("files").load(cfg) directly isn't silently missing that data.
+
+    This is intentional and documented in files.py — this test pins that contract.
+    """
+    (tmp_path / "a.md").write_text("Cats are great pets.")
+    jl = tmp_path / "pre.jsonl"
+    jl.write_text(json.dumps({"id": "p1", "text": "Dogs are loyal.", "source": "pre"}) + "\n")
+    cfg = Config(paths=[str(tmp_path / "a.md"), str(jl)])
+
+    with pytest.warns(UserWarning, match="jsonl"):
+        docs = FilesSource().load(cfg)
+    sources = [d.source for d in docs]
+    # Only the .md was loaded; the .jsonl was skipped
+    assert len(docs) == 1
+    assert str(tmp_path / "a.md") in sources
+    assert str(jl) not in sources
