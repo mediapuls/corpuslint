@@ -162,6 +162,48 @@ does **not** block internal, loopback, or private-range targets (e.g.
 run it against docs sites you trust; don't feed it attacker-controlled start
 URLs or sitemaps. This is an accepted trade-off for a user-run CLI.
 
+### S3 (object storage)
+Needs the `[s3]` extra. Reads documents straight out of an S3 bucket (or any
+S3-compatible store — Cloudflare R2, MinIO, Wasabi, Backblaze B2). The bucket is
+passed with `--source-opt bucket=<name>`:
+
+```bash
+pip install "corpuslint[s3]"
+# Credentials come from boto3's standard chain — env vars or ~/.aws/credentials:
+export AWS_ACCESS_KEY_ID=<key>
+export AWS_SECRET_ACCESS_KEY=<secret>   # (AWS_SESSION_TOKEN too, if you use one)
+
+corpuslint --source s3 --source-opt bucket=my-docs-bucket
+# only objects under a prefix:
+corpuslint --source s3 --source-opt bucket=my-docs-bucket --source-opt prefix=docs/
+
+# S3-compatible store (Cloudflare R2 shown); endpoint_url switches provider:
+corpuslint --source s3 --source-opt bucket=my-bucket \
+  --source-opt endpoint_url=https://<accountid>.r2.cloudflarestorage.com \
+  --source-opt region=auto
+```
+
+| `--source-opt` | Default | Meaning |
+|---|---|---|
+| `bucket` | — (required) | bucket to read from |
+| `prefix` | (none) | only enumerate objects whose key starts with this |
+| `endpoint_url` | (none) | point at an S3-compatible store instead of AWS S3 |
+| `region` | (none) | bucket region (passed to boto3 as `region_name`) |
+
+It lists **every** object under the prefix (paginated — no silent cap), and for
+each object with a supported extension (`.md`, `.txt`, `.html`, `.htm`) downloads
+its bytes and runs them through the same parsers used for local files, mapping
+each to a document whose source is `s3://<bucket>/<key>`. Objects with any other
+extension (images, PDFs, archives, other binaries) are skipped without a
+download. A per-object download or parse error skips that object with a warning
+and the run continues.
+
+**Credentials** are resolved entirely by boto3's standard chain — environment
+variables, `~/.aws/credentials`, or an instance/role profile — and are **never**
+read from `--source-opt` or `.corpuslint.yml`, so no secret lands in config. If
+boto3 can't resolve credentials the connector fails with a clean, secret-free
+error.
+
 ### Source options
 
 Every source reads its settings from a generic bag, so no source needs its own
