@@ -22,6 +22,17 @@ class _TextExtractor(HTMLParser):
         return " ".join(" ".join(self.parts).split())
 
 
+def html_to_text(html: str) -> str:
+    """Strip tags/markup from an HTML string, returning collapsed plain text.
+
+    Shared by the files loader (``.html`` inputs) and remote sources that hand
+    back HTML/XHTML bodies (e.g. Confluence storage-format pages).
+    """
+    parser = _TextExtractor()
+    parser.feed(html)
+    return parser.text()
+
+
 def _iter_files(paths: list[str]):
     for p in paths:
         path = Path(p)
@@ -40,7 +51,6 @@ def load_documents(paths: list[str], config: Config) -> list[Document]:
         if ext in TEXT_EXTS:
             docs.append(Document(text=file.read_text(encoding="utf-8", errors="ignore"), source=str(file)))
         elif ext in HTML_EXTS:
-            parser = _TextExtractor()
-            parser.feed(file.read_text(encoding="utf-8", errors="ignore"))
-            docs.append(Document(text=parser.text(), source=str(file)))
+            text = html_to_text(file.read_text(encoding="utf-8", errors="ignore"))
+            docs.append(Document(text=text, source=str(file)))
     return docs

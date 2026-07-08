@@ -71,6 +71,30 @@ normal chunking + check pipeline. `--content-field` (default `content`) selects 
 field holding the text; `--id-field` (default `id`) selects the id field. Documents
 missing the content field are skipped with a warning.
 
+### Confluence
+No extra needed — the connector uses only the standard library. Reads the
+account email and API token from the environment; the space key is passed with
+`--source-opt space=<KEY>`. The base URL can come from `--source-opt base_url=...`
+or the `CONFLUENCE_BASE_URL` env var:
+
+```bash
+export CONFLUENCE_BASE_URL=https://<site>.atlassian.net
+export CONFLUENCE_EMAIL=you@example.com
+export CONFLUENCE_API_TOKEN=<token>   # id.atlassian.com/manage-profile/security/api-tokens
+
+corpuslint --source confluence --source-opt space=NCPCS
+# base URL can also be passed inline instead of via env:
+corpuslint --source confluence --source-opt space=NCPCS --source-opt base_url=https://acme.atlassian.net
+```
+
+It pages through **every** current page in the space (no silent cap), prepends
+the page title as an `<h1>` to the storage-format body, strips the XHTML/`<ac:…>`
+macros to clean text (the same extractor used for local `.html` files), and maps
+each to a document whose source is
+`https://<site>.atlassian.net/wiki/spaces/<KEY>/pages/<id>`. Pages with an empty
+body are skipped with a warning. Credentials are read from the environment only —
+never from `--source-opt` or `.corpuslint.yml` — so tokens don't land in config.
+
 ### Source options
 
 Every source reads its settings from a generic bag, so no source needs its own
