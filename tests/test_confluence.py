@@ -1,3 +1,7 @@
+import io
+import urllib.error
+import urllib.request
+
 import pytest
 
 from corpuslint.config import Config
@@ -8,6 +12,7 @@ from corpuslint.sources.confluence import (
     ConfluenceSource,
     _build_content_url,
     _documents_from_source,
+    _http_get_json,
     load_confluence_documents,
 )
 
@@ -253,3 +258,80 @@ def test_confluence_document_type():
     api = _FakeApi([_page("1", "T", "<p>b</p>")])
     docs = _documents_from_source("https://x.atlassian.net", "S", api.fetch)
     assert isinstance(docs[0], Document)
+
+
+# ---- HTTP error paths (_http_get_json) --------------------------------------
+
+
+def _make_http_error(code: int, msg: str = "Error") -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(
+        url="https://x.atlassian.net/wiki/rest/api/content",
+        code=code,
+        msg=msg,
+        hdrs={},  # type: ignore[arg-type]
+        fp=io.BytesIO(b""),
+    )
+
+
+def test_http_401_raises_confluence_error_naming_creds(monkeypatch):
+    def _boom(req):
+        raise _make_http_error(401)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    with pytest.raises(ConfluenceError) as exc:
+        _http_get_json("https://x.atlassian.net/wiki/rest/api/content", "me@corp.example", "tok")
+    msg = str(exc.value)
+    assert "401" in msg
+    assert "CONFLUENCE_EMAIL" in msg or "CONFLUENCE_API_TOKEN" in msg or "credentials" in msg.lower()
+
+
+def test_http_403_raises_confluence_error_naming_creds(monkeypatch):
+    def _boom(req):
+        raise _make_http_error(403)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    with pytest.raises(ConfluenceError) as exc:
+        _http_get_json("https://x.atlassian.net/wiki/rest/api/content", "me@corp.example", "tok")
+    msg = str(exc.value)
+    assert "403" in msg
+    assert "CONFLUENCE_EMAIL" in msg or "CONFLUENCE_API_TOKEN" in msg or "credentials" in msg.lower()
+
+
+def test_http_500_raises_confluence_error_with_code(monkeypatch):
+    def _boom(req):
+        raise _make_http_error(500, "Internal Server Error")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    with pytest.raises(ConfluenceError) as exc:
+        _http_get_json("https://x.atlassian.net/wiki/rest/api/content", "me@corp.example", "tok")
+    assert "500" in str(exc.value)
+
+
+def test_http_404_raises_confluence_error_with_code(monkeypatch):
+    def _boom(req):
+        raise _make_http_error(404, "Not Found")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    with pytest.raises(ConfluenceError) as exc:
+        _http_get_json("https://x.atlassian.net/wiki/rest/api/content", "me@corp.example", "tok")
+    assert "404" in str(exc.value)
+
+
+def test_url_error_raises_confluence_error_without_traceback(monkeypatch):
+    def _boom(req):
+        raise urllib.error.URLError("Name or service not known")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    with pytest.raises(ConfluenceError) as exc:
+        _http_get_json("https://x.atlassian.net/wiki/rest/api/content", "me@corp.example", "tok")
+    assert "reach" in str(exc.value).lower() or "confluence" in str(exc.value).lower()
+
+
+def test_http_error_does_not_leak_api_token(monkeypatch):
+    def _boom(req):
+        raise _make_http_error(401)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    with pytest.raises(ConfluenceError) as exc:
+        _http_get_json("https://x.atlassian.net/wiki/rest/api/content", "me@corp.example", "super-secret-token")
+    assert "super-secret-token" not in str(exc.value)
