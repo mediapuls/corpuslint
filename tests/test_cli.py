@@ -195,6 +195,65 @@ def test_cli_azure_reads_index_from_source_opt(monkeypatch):
     assert captured["index"] == "kb"
 
 
+def test_cli_confluence_source_end_to_end_flags_duplicates(monkeypatch):
+    """--source confluence with the HTTP layer stubbed runs the whole pipeline."""
+    dup = "<p>Refunds take 5 days.</p>"
+    monkeypatch.setenv("CONFLUENCE_EMAIL", "me@corp.example")
+    monkeypatch.setenv("CONFLUENCE_API_TOKEN", "tok")
+
+    def _fake_http(url, email, api_token):
+        return {
+            "results": [
+                {"id": "1", "title": "Refunds", "body": {"storage": {"value": dup}}},
+                {"id": "2", "title": "Refunds", "body": {"storage": {"value": dup}}},
+            ],
+            "size": 2,
+            "limit": 50,
+            "start": 0,
+        }
+
+    monkeypatch.setattr("corpuslint.sources.confluence._http_get_json", _fake_http)
+    result = runner.invoke(
+        app,
+        [
+            "--source", "confluence",
+            "--source-opt", "space=NCPCS",
+            "--source-opt", "base_url=https://x.atlassian.net",
+            "--embedder", "none",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    assert "duplicate" in result.output.lower()
+
+
+def test_cli_confluence_requires_space():
+    result = runner.invoke(
+        app,
+        ["--source", "confluence", "--source-opt", "base_url=https://x.atlassian.net", "--embedder", "none"],
+    )
+    assert result.exit_code == 1
+    assert "space" in result.output.lower()
+    assert "Traceback" not in result.output
+
+
+def test_cli_confluence_missing_creds_is_clean(monkeypatch):
+    monkeypatch.delenv("CONFLUENCE_EMAIL", raising=False)
+    monkeypatch.setenv("CONFLUENCE_API_TOKEN", "tok")
+    result = runner.invoke(
+        app,
+        [
+            "--source", "confluence",
+            "--source-opt", "space=NCPCS",
+            "--source-opt", "base_url=https://x.atlassian.net",
+            "--embedder", "none",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "CONFLUENCE_EMAIL" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_cli_unknown_source_is_clean():
     result = runner.invoke(app, ["--source", "bogus", "--embedder", "none"])
     assert result.exit_code != 0
