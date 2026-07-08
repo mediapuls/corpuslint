@@ -28,6 +28,11 @@ def test_get_source_returns_s3_source():
     assert src.name == "s3"
 
 
+def test_get_source_returns_sharepoint_source():
+    src = get_source("sharepoint")
+    assert src.name == "sharepoint"
+
+
 def test_get_source_unknown_raises_listing_valid_names():
     with pytest.raises(UnknownSourceError) as exc:
         get_source("bogus")
