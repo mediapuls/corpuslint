@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -96,6 +98,20 @@ def test_missing_path_returns_clean_error(tmp_path: Path):
     assert isinstance(result["error"], str)
 
 
+@pytest.mark.skipif(os.getuid() == 0, reason="chmod has no effect when running as root")
+def test_unreadable_path_returns_clean_error(tmp_path: Path):
+    unreadable = tmp_path / "secret.md"
+    unreadable.write_text("content")
+    unreadable.chmod(0o000)
+    try:
+        result = mcp_server.lint_corpus(str(unreadable), embedder="none")
+        assert "error" in result
+        assert "score" not in result
+        assert isinstance(result["error"], str)
+    finally:
+        unreadable.chmod(0o644)  # restore so tmp_path cleanup succeeds
+
+
 # ---- server wiring ----------------------------------------------------------
 
 
@@ -127,3 +143,34 @@ def test_importing_mcp_server_does_not_require_mcp(monkeypatch):
     import corpuslint.mcp_server as mod
 
     assert callable(mod.lint_corpus)
+
+
+# ---- end-to-end MCP roundtrip (in-memory transport) ------------------------
+
+
+@pytest.mark.anyio
+async def test_e2e_mcp_roundtrip_list_and_call(tmp_path: Path):
+    """Full stdio-equivalent roundtrip: connect an in-memory client to the real
+    FastMCP server, list tools, then call lint_corpus on a fixture with a
+    duplicate and verify the response shape and finding."""
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    (tmp_path / "a.md").write_text(_DUPLICATE_PARAGRAPH)
+    (tmp_path / "b.md").write_text(_DUPLICATE_PARAGRAPH)
+
+    server = mcp_server._build_server()
+    async with create_connected_server_and_client_session(server) as session:
+        tools_result = await session.list_tools()
+        tool_names = {t.name for t in tools_result.tools}
+        assert "lint_corpus" in tool_names
+
+        call_result = await session.call_tool(
+            "lint_corpus", {"path": str(tmp_path), "embedder": "none"}
+        )
+        assert not call_result.isError
+        assert call_result.content, "expected at least one content block"
+
+        payload = json.loads(call_result.content[0].text)  # type: ignore[attr-defined]
+        assert set(payload) >= {"score", "total_chunks", "counts_by_check", "top_offenders", "findings"}
+        assert payload["counts_by_check"].get("exact_duplicates", 0) >= 1
+        assert payload["score"] < 100
