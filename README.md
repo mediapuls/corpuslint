@@ -71,6 +71,62 @@ normal chunking + check pipeline. `--content-field` (default `content`) selects 
 field holding the text; `--id-field` (default `id`) selects the id field. Documents
 missing the content field are skipped with a warning.
 
+### Source options
+
+Every source reads its settings from a generic bag, so no source needs its own
+global flag. Pass options with the repeatable `--source-opt key=value`, or set a
+`source_options:` block in `.corpuslint.yml`:
+
+```bash
+corpuslint --source azure-search --source-opt index=my-index --source-opt content_field=body
+```
+
+```yaml
+source: azure-search
+source_options:
+  index: my-index
+  content_field: body
+```
+
+For Azure AI Search the dedicated flags (`--index`, `--content-field`,
+`--id-field`) still work and are equivalent to the matching `--source-opt`.
+
+### Adding a source
+
+A source is one small module plus a registry entry — no `cli.py` changes:
+
+1. Implement the `Source` protocol (`corpuslint.sources.base.Source`): a `name`
+   attribute and `load(config) -> list[Document]`. Read your settings from
+   `config.source_options` (the `--source-opt` / YAML bag). Raise
+   `SourceError` with a clear message when a required option is missing or the
+   backend fails — the CLI turns it into a clean error, never a traceback.
+2. Register the instance with `register(...)`:
+
+   ```python
+   # corpuslint/sources/notion.py
+   from ..config import Config
+   from ..models import Document
+   from .base import SourceError, register
+
+
+   class NotionSource:
+       name = "notion"
+
+       def load(self, config: Config) -> list[Document]:
+           token = config.source_options.get("token")
+           if not token:
+               raise SourceError("the notion source requires --source-opt token=...")
+           ...  # fetch pages, return Documents
+           return docs
+
+
+   register(NotionSource())
+   ```
+
+3. Import the module in `corpuslint/sources/__init__.py` so it registers on load.
+
+Now `corpuslint --source notion --source-opt token=...` works end to end.
+
 ## MCP server
 Needs the `[mcp]` extra. `corpuslint-mcp` runs a stdio [Model Context
 Protocol](https://modelcontextprotocol.io) server so an AI agent (Claude Desktop,
@@ -108,7 +164,9 @@ Optional `.corpuslint.yml` overrides thresholds and check selection.
 
 ## Architecture
 Library-first: `corpuslint.analyze(paths, config) -> Report`. The CLI is a thin
-wrapper; the same API backs the CLI, the MCP server, and the Azure AI Search
-connector. Eval-set generation and drift monitoring are on the roadmap.
+wrapper; the same API backs the CLI, the MCP server, and the source connectors.
+Sources are pluggable through a small registry (`corpuslint.sources`) — see
+[Adding a source](#adding-a-source). Eval-set generation and drift monitoring are
+on the roadmap.
 
 MIT licensed.
