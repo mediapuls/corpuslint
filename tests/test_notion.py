@@ -393,6 +393,18 @@ def test_http_401_raises_notion_error_naming_token(monkeypatch):
     assert "NOTION_TOKEN" in msg or "credentials" in msg.lower()
 
 
+def test_http_403_raises_notion_error_naming_token(monkeypatch):
+    def _boom(req):
+        raise _make_http_error(403)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    with pytest.raises(NotionError) as exc:
+        _http_request_json("https://api.notion.com/v1/databases/db/query", "tok", method="POST", payload={})
+    msg = str(exc.value)
+    assert "403" in msg
+    assert "NOTION_TOKEN" in msg or "credentials" in msg.lower()
+
+
 def test_http_404_raises_notion_error_with_code(monkeypatch):
     def _boom(req):
         raise _make_http_error(404, "Not Found")
@@ -401,6 +413,16 @@ def test_http_404_raises_notion_error_with_code(monkeypatch):
     with pytest.raises(NotionError) as exc:
         _http_request_json("https://api.notion.com/v1/databases/db/query", "tok", method="POST", payload={})
     assert "404" in str(exc.value)
+
+
+def test_http_500_raises_notion_error_with_code(monkeypatch):
+    def _boom(req):
+        raise _make_http_error(500, "Internal Server Error")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    with pytest.raises(NotionError) as exc:
+        _http_request_json("https://api.notion.com/v1/databases/db/query", "tok", method="POST", payload={})
+    assert "500" in str(exc.value)
 
 
 def test_url_error_raises_notion_error_without_traceback(monkeypatch):
