@@ -70,7 +70,12 @@ def main(
                 f"expected key=value, got {item!r}", param_hint="--source-opt"
             )
         key, value = item.split("=", 1)
-        cfg.source_options[key.strip()] = value.strip()
+        key = key.strip()
+        if not key:
+            raise typer.BadParameter(
+                f"empty option key in {item!r}", param_hint="--source-opt"
+            )
+        cfg.source_options[key] = value.strip()
 
     llm_client = None
     if llm:
@@ -94,7 +99,7 @@ def main(
     emb = get_embedder(embedder, cfg)
 
     try:
-        source = get_source(cfg.source)
+        src = get_source(cfg.source)
     except UnknownSourceError as e:
         raise typer.BadParameter(str(e), param_hint="--source") from e
 
@@ -106,7 +111,7 @@ def main(
         report = analyze(cfg.paths, cfg, embedder=emb, llm=llm_client)
     else:
         try:
-            documents = source.load(cfg)
+            documents = src.load(cfg)
         except SourceError as e:
             # Missing option / extra / env var / SDK failure is a config problem, not a bad CLI argument.
             typer.echo(f"Error: {e}", err=True)

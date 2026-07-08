@@ -209,3 +209,53 @@ def test_cli_json_output_and_fail_under(tmp_path: Path):
     result = runner.invoke(app, [str(tmp_path), "--embedder", "none", "--json", "--fail-under", "100"])
     assert result.exit_code == 1  # duplicates drop score below 100
     assert '"score"' in result.stdout
+
+
+def test_cli_source_opt_no_equals_is_clean_error():
+    """--source-opt without '=' must produce a descriptive error, not a traceback."""
+    result = runner.invoke(app, ["--source", "azure-search", "--source-opt", "justkey", "--embedder", "none"])
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "key=value" in result.output.lower() or "justkey" in result.output.lower()
+
+
+def test_cli_source_opt_empty_key_is_clean_error():
+    """--source-opt =value (empty key) must produce a descriptive error, not a
+    traceback, and must not insert a "" key into source_options."""
+    result = runner.invoke(app, ["--source", "azure-search", "--source-opt", "=value", "--embedder", "none"])
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "empty" in result.output.lower() and "key" in result.output.lower()
+
+
+def test_cli_source_opt_value_with_equals_is_accepted(monkeypatch):
+    """--source-opt a=b=c must parse as key='a', value='b=c' (split on first '=' only)."""
+    captured: dict = {}
+
+    def _capture(index, cfg):
+        captured["source_options"] = dict(cfg.source_options)
+        return [Document(text="hi", source="azure-search://kb/1")]
+
+    monkeypatch.setattr("corpuslint.sources.azure_search.load_azure_documents", _capture)
+    result = runner.invoke(
+        app,
+        ["--source", "azure-search", "--index", "kb", "--source-opt", "url=https://example.com/path=1", "--embedder", "none"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["source_options"]["url"] == "https://example.com/path=1"
+
+
+def test_cli_jsonl_fast_path_finds_duplicates(tmp_path: Path):
+    """Passing a .jsonl file to the CLI (--source files) must use the pre-chunked
+    fast-path — duplicates in the .jsonl must be detected, proving the file was
+    read via load_prechunked_jsonl, not skipped."""
+    import json as _json
+    jl = tmp_path / "chunks.jsonl"
+    jl.write_text(
+        _json.dumps({"id": "c1", "text": "Refunds take five business days.", "source": "kb/1"}) + "\n"
+        + _json.dumps({"id": "c2", "text": "Refunds take five business days.", "source": "kb/2"}) + "\n"
+    )
+    result = runner.invoke(app, [str(jl), "--embedder", "none"])
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    assert "duplicate" in result.output.lower()
