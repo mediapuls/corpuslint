@@ -95,6 +95,29 @@ each to a document whose source is
 body are skipped with a warning. Credentials are read from the environment only —
 never from `--source-opt` or `.corpuslint.yml` — so tokens don't land in config.
 
+### Notion
+No extra needed — the connector uses only the standard library. Reads the
+integration token from the environment; the database is passed with
+`--source-opt database_id=<id>`:
+
+```bash
+export NOTION_TOKEN=<secret_token>   # notion.so/my-integrations → Internal Integration Secret
+
+corpuslint --source notion --source-opt database_id=1a2b3c4d5e6f7890abcdef1234567890
+```
+
+Create an internal integration, then **share the database with it** (database
+`•••` menu → Connections) so the token can see it. The connector queries the
+database (`POST /v1/databases/{id}/query`, paged via `start_cursor` — **every**
+row, no silent cap), then for each page pulls its blocks
+(`GET /v1/blocks/{id}/children`, also fully paged) and turns the supported block
+types (paragraph, headings, list items, to-dos, quotes, callouts, code) into
+text, recursing into nested blocks up to a bounded depth. Each page maps to a
+document whose text is the page title plus its block text and whose source is the
+page URL (falling back to `notion://<page_id>`). Pages with no title and no text
+are skipped with a warning. The token is read from the environment only — never
+from `--source-opt` or `.corpuslint.yml` — so it doesn't land in config.
+
 ### Source options
 
 Every source reads its settings from a generic bag, so no source needs its own
@@ -127,29 +150,31 @@ A source is one small module plus a registry entry — no `cli.py` changes:
 2. Register the instance with `register(...)`:
 
    ```python
-   # corpuslint/sources/notion.py
+   # corpuslint/sources/example.py
    from ..config import Config
    from ..models import Document
    from .base import SourceError, register
 
 
-   class NotionSource:
-       name = "notion"
+   class ExampleSource:
+       name = "example"
 
        def load(self, config: Config) -> list[Document]:
-           token = config.source_options.get("token")
-           if not token:
-               raise SourceError("the notion source requires --source-opt token=...")
-           ...  # fetch pages, return Documents
+           dataset = config.source_options.get("dataset")
+           if not dataset:
+               raise SourceError("the example source requires --source-opt dataset=...")
+           ...  # fetch pages, return Documents (read secrets from os.environ, not options)
            return docs
 
 
-   register(NotionSource())
+   register(ExampleSource())
    ```
 
 3. Import the module in `corpuslint/sources/__init__.py` so it registers on load.
 
-Now `corpuslint --source notion --source-opt token=...` works end to end.
+Now `corpuslint --source example --source-opt dataset=...` works end to end.
+See `corpuslint/sources/confluence.py` and `corpuslint/sources/notion.py` for
+real, stdlib-only connectors that follow this shape.
 
 ## MCP server
 Needs the `[mcp]` extra. `corpuslint-mcp` runs a stdio [Model Context

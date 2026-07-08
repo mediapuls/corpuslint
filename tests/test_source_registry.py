@@ -13,6 +13,11 @@ def test_get_source_returns_azure_search_source():
     assert src.name == "azure-search"
 
 
+def test_get_source_returns_notion_source():
+    src = get_source("notion")
+    assert src.name == "notion"
+
+
 def test_get_source_unknown_raises_listing_valid_names():
     with pytest.raises(UnknownSourceError) as exc:
         get_source("bogus")
