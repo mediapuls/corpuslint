@@ -118,6 +118,50 @@ page URL (falling back to `notion://<page_id>`). Pages with no title and no text
 are skipped with a warning. The token is read from the environment only — never
 from `--source-opt` or `.corpuslint.yml` — so it doesn't land in config.
 
+### Web (docs site)
+No extra needed — the connector uses only the standard library. It pulls a docs
+website in one of two modes, passed via `--source-opt`:
+
+```bash
+# sitemap mode (recommended): fetch every URL in a sitemap
+corpuslint --source web --source-opt sitemap=https://docs.acme.com/sitemap.xml
+
+# crawl mode: BFS from a start URL, following same-domain links
+corpuslint --source web --source-opt url=https://docs.acme.com/ --source-opt depth=2 --source-opt max_pages=200
+```
+
+**Sitemap mode** (`sitemap=<url>`) fetches the sitemap, follows nested
+sitemap-index files, and pulls every listed page. **Crawl mode** (`url=<start>`)
+does a breadth-first crawl from the start URL, extracting `<a href>` links from
+each page and following the same-domain ones. Either way each page's HTML is run
+through the same extractor used for local `.html` files and mapped to a document
+whose source is the page URL.
+
+The crawler is bounded and polite by default:
+
+| `--source-opt` | Default | Meaning |
+|---|---|---|
+| `depth` | `2` | crawl-mode link depth from the start URL |
+| `max_pages` | `200` | hard cap on pages fetched — never unbounded; a warning is emitted when the cap truncates the run |
+| `delay` | `0.5` | seconds between requests, so we don't hammer the site. A robots.txt `Crawl-delay` raises this (the larger of the two wins) |
+
+Additional guardrails, always on:
+- **robots.txt is respected** — disallowed URLs are skipped, and a `Crawl-delay`
+  directive is honored (per-host, cached). The delay applies to every fetch
+  attempt (including 404s and non-HTML) and between sitemap sub-files.
+- **Same-domain only** in crawl mode — external links are never followed.
+- **Deduped** visited URLs, **bounded depth**, URL fragments stripped.
+- **Non-HTML responses** (PDF, images, JSON) are skipped with a warning.
+- A per-page fetch error (404/timeout) skips that page and the run continues.
+- Requests send a `corpuslint/<version>` **User-Agent**.
+- Sitemaps carrying a `DOCTYPE`/entity declaration are refused (XXE / billion-laughs guard).
+
+**Not guarded — SSRF:** the crawler fetches whatever URLs you point it at and
+does **not** block internal, loopback, or private-range targets (e.g.
+`http://localhost/`, `http://169.254.169.254/`, `http://10.0.0.0/8` hosts). Only
+run it against docs sites you trust; don't feed it attacker-controlled start
+URLs or sitemaps. This is an accepted trade-off for a user-run CLI.
+
 ### Source options
 
 Every source reads its settings from a generic bag, so no source needs its own

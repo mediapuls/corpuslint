@@ -305,6 +305,79 @@ def test_cli_notion_missing_token_is_clean(monkeypatch):
     assert "Traceback" not in result.output
 
 
+def test_cli_web_sitemap_source_end_to_end_flags_duplicates(monkeypatch):
+    """--source web (sitemap mode) with the fetch layer stubbed runs the pipeline."""
+    sitemap = (
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        "<url><loc>https://docs.x.com/a</loc></url>"
+        "<url><loc>https://docs.x.com/b</loc></url>"
+        "</urlset>"
+    )
+    pages = {
+        "https://docs.x.com/sitemap.xml": ("application/xml", sitemap),
+        "https://docs.x.com/a": ("text/html", "<p>Refunds take 5 days.</p>"),
+        "https://docs.x.com/b": ("text/html", "<p>Refunds take 5 days.</p>"),
+    }
+
+    def _fake_fetch(url):
+        if url.endswith("/robots.txt"):
+            return ("text/plain", "")  # allow all
+        return pages[url]
+
+    monkeypatch.setattr("corpuslint.sources.web._http_fetch", _fake_fetch)
+    result = runner.invoke(
+        app,
+        [
+            "--source", "web",
+            "--source-opt", "sitemap=https://docs.x.com/sitemap.xml",
+            "--source-opt", "delay=0",
+            "--embedder", "none",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    assert "duplicate" in result.output.lower()
+
+
+def test_cli_web_crawl_source_end_to_end(monkeypatch):
+    """--source web (crawl/url mode) with the fetch layer stubbed runs the pipeline."""
+    pages = {
+        "https://docs.x.com/": (
+            "text/html",
+            '<p>Refunds take 5 days.</p><a href="/a">a</a>',
+        ),
+        "https://docs.x.com/a": ("text/html", "<p>Page A</p>"),
+    }
+
+    def _fake_fetch(url):
+        if url.endswith("/robots.txt"):
+            return ("text/plain", "")
+        if url in pages:
+            return pages[url]
+        raise RuntimeError(f"unexpected fetch: {url}")
+
+    monkeypatch.setattr("corpuslint.sources.web._http_fetch", _fake_fetch)
+    result = runner.invoke(
+        app,
+        [
+            "--source", "web",
+            "--source-opt", "url=https://docs.x.com/",
+            "--source-opt", "delay=0",
+            "--source-opt", "depth=1",
+            "--embedder", "none",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_web_requires_sitemap_or_url():
+    result = runner.invoke(app, ["--source", "web", "--embedder", "none"])
+    assert result.exit_code == 1
+    assert "sitemap" in result.output.lower() or "url" in result.output.lower()
+    assert "Traceback" not in result.output
+
+
 def test_cli_unknown_source_is_clean():
     result = runner.invoke(app, ["--source", "bogus", "--embedder", "none"])
     assert result.exit_code != 0
