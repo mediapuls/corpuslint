@@ -7,9 +7,11 @@ from corpuslint.config import Config
 from corpuslint.models import Document
 from corpuslint.sources.azure_search import (
     AzureSearchError,
+    AzureSearchSource,
     _documents_from_client,
     load_azure_documents,
 )
+from corpuslint.sources.base import SourceError
 
 
 class _FakePaged:
@@ -191,3 +193,28 @@ def test_base_import_unaffected_when_azure_sdk_absent(monkeypatch):
 
     assert callable(mod.load_azure_documents)
     assert issubclass(mod.AzureSearchError, RuntimeError)
+
+
+# ---- AzureSearchSource: source_options + no config mutation ------------------
+
+
+def test_source_requires_index():
+    with pytest.raises(SourceError, match="index"):
+        AzureSearchSource().load(_cfg())
+
+
+def test_source_reads_field_overrides_from_source_options_without_mutating_config(monkeypatch):
+    # A real fake-SDK run (not a load_azure_documents patch) so this is robust to
+    # test-ordering that reimports the module.
+    _install_fake_sdk(monkeypatch, pages=[[{"key": "k1", "body": "hello world"}]])
+    monkeypatch.setenv("AZURE_SEARCH_ENDPOINT", "https://svc.search.windows.net")
+    monkeypatch.setenv("AZURE_SEARCH_API_KEY", "secret-key")
+
+    cfg = _cfg(source_options={"index": "kb", "content_field": "body", "id_field": "key"})
+    docs = AzureSearchSource().load(cfg)
+
+    # the resolved (effective) config drove the field mapping downstream...
+    assert docs == [Document(text="hello world", source="azure-search://kb/k1")]
+    # ...but the caller's Config is untouched (reusable across load() calls).
+    assert cfg.content_field == "content"
+    assert cfg.id_field == "id"

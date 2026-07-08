@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import warnings
+from dataclasses import replace
 
 from ..config import Config
 from ..models import Document
@@ -123,12 +124,14 @@ class AzureSearchSource:
                 "(pass --index, --source-opt index=..., or set it in .corpuslint.yml)"
             )
         # Field overrides via source_options need no dedicated flag; they feed the
-        # same config load_azure_documents already reads.
-        if "content_field" in opts:
-            config.content_field = opts["content_field"]
-        if "id_field" in opts:
-            config.id_field = opts["id_field"]
-        return load_azure_documents(index, config)
+        # same config load_azure_documents already reads. Resolve into a copy so a
+        # caller reusing the same Config across load() calls gets no side effects.
+        effective = replace(
+            config,
+            content_field=opts.get("content_field", config.content_field),
+            id_field=opts.get("id_field", config.id_field),
+        )
+        return load_azure_documents(index, effective)
 
 
 register(AzureSearchSource())
