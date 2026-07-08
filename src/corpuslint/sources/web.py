@@ -106,7 +106,7 @@ def _parse_sitemap(xml_text: str) -> tuple[list[str], bool]:
 
 
 def _collect_sitemap_urls(
-    sitemap_url: str, fetch: Fetch, max_pages: int
+    sitemap_url: str, fetch: Fetch, max_pages: int, delay: float = 0.0
 ) -> tuple[list[str], bool]:
     """BFS a sitemap (following nested indexes) into a deduped page-URL list.
 
@@ -114,11 +114,14 @@ def _collect_sitemap_urls(
     at most ``_MAX_SITEMAPS`` sitemap files, and at most ``max_pages`` page URLs.
     Returns ``(urls, truncated)`` where ``truncated`` flags that a cap was hit.
     A sitemap that fails to fetch/parse is skipped with a warning, not fatal.
+    ``delay`` seconds are slept after each sitemap-file fetch so index sub-files
+    aren't pulled back-to-back.
     """
     page_urls: list[str] = []
     seen_pages: set[str] = set()
     seen_sitemaps: set[str] = set()
     queue: deque[str] = deque([sitemap_url])
+    fetches = 0
     while queue:
         sm = queue.popleft()
         if sm in seen_sitemaps:
@@ -126,6 +129,9 @@ def _collect_sitemap_urls(
         seen_sitemaps.add(sm)
         if len(seen_sitemaps) > _MAX_SITEMAPS:
             return page_urls, True
+        if fetches > 0:
+            _sleep(delay)  # polite gap between sitemap-file fetches
+        fetches += 1
         try:
             _, body = fetch(sm)
             locs, is_index = _parse_sitemap(body)
@@ -190,14 +196,22 @@ class _Robots:
         self._fetch = fetch
         self._cache: dict[str, RobotFileParser] = {}
 
-    def allowed(self, url: str) -> bool:
+    def _parser(self, url: str) -> RobotFileParser:
         parsed = urlparse(url)
         origin = f"{parsed.scheme}://{parsed.netloc}"
         rp = self._cache.get(origin)
         if rp is None:
             rp = self._load(origin)
             self._cache[origin] = rp
-        return rp.can_fetch(_USER_AGENT, url)
+        return rp
+
+    def allowed(self, url: str) -> bool:
+        return self._parser(url).can_fetch(_USER_AGENT, url)
+
+    def crawl_delay(self, url: str) -> float | None:
+        """robots.txt Crawl-delay for ``url``'s host, or None if unspecified."""
+        cd = self._parser(url).crawl_delay(_USER_AGENT)
+        return float(cd) if cd is not None else None
 
     def _load(self, origin: str) -> RobotFileParser:
         rp = RobotFileParser()
@@ -234,6 +248,12 @@ def _sleep(delay: float) -> None:
         time.sleep(delay)
 
 
+def _effective_delay(base_delay: float, robots: "_Robots", url: str) -> float:
+    """Politeness delay for ``url``: the larger of our default and robots Crawl-delay."""
+    crawl_delay = robots.crawl_delay(url)
+    return max(base_delay, crawl_delay) if crawl_delay is not None else base_delay
+
+
 def _int_opt(opts: dict, key: str, default: int) -> int:
     raw = opts.get(key)
     if raw is None:
@@ -263,14 +283,16 @@ def load_web_sitemap(
     max_pages = _int_opt(opts, "max_pages", _DEFAULT_MAX_PAGES)
     delay = _float_opt(opts, "delay", _DEFAULT_DELAY)
 
-    urls, truncated = _collect_sitemap_urls(sitemap_url, fetch, max_pages)
+    robots = _Robots(fetch)
+    urls, truncated = _collect_sitemap_urls(
+        sitemap_url, fetch, max_pages, delay=_effective_delay(delay, robots, sitemap_url)
+    )
     if truncated:
         warnings.warn(
             f"sitemap truncated at max_pages={max_pages}; not all pages were fetched",
             UserWarning,
             stacklevel=2,
         )
-    robots = _Robots(fetch)
     docs: list[Document] = []
     for url in urls:
         if not robots.allowed(url):
@@ -279,7 +301,7 @@ def load_web_sitemap(
         doc = _fetch_document(url, fetch)
         if doc is not None:
             docs.append(doc)
-        _sleep(delay)
+        _sleep(_effective_delay(delay, robots, url))
     # Report on stderr (keeps stdout/--json clean) to back the "no silent cap" claim.
     print(f"fetched {len(docs)} documents from sitemap {sitemap_url!r}", file=sys.stderr)
     return docs
@@ -320,26 +342,31 @@ def load_web_crawl(
         if not robots.allowed(url):
             warnings.warn(f"skipping {url}: disallowed by robots.txt", UserWarning, stacklevel=2)
             continue
+        # We're about to hit the network, so sleep after the attempt no matter how
+        # it turns out — a page of 404s/PDFs must not become rapid-fire requests.
+        # robots.txt Crawl-delay, if any, raises the effective delay.
         try:
-            content_type, body = fetch(url)
-        except WebError as e:
-            warnings.warn(f"skipping {url}: {e}", UserWarning, stacklevel=2)
-            continue
-        if content_type not in _HTML_TYPES:
-            warnings.warn(
-                f"skipping {url}: non-HTML content-type {content_type!r}",
-                UserWarning,
-                stacklevel=2,
-            )
-            continue
-        docs.append(Document(text=html_to_text(body), source=url))
-        _sleep(delay)
-        if url_depth < depth:
-            for link in _extract_links(body, url):
-                if urlparse(link).netloc != domain:  # same-domain only
-                    continue
-                if link not in visited:
-                    queue.append((link, url_depth + 1))
+            try:
+                content_type, body = fetch(url)
+            except WebError as e:
+                warnings.warn(f"skipping {url}: {e}", UserWarning, stacklevel=2)
+                continue
+            if content_type not in _HTML_TYPES:
+                warnings.warn(
+                    f"skipping {url}: non-HTML content-type {content_type!r}",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+            docs.append(Document(text=html_to_text(body), source=url))
+            if url_depth < depth:
+                for link in _extract_links(body, url):
+                    if urlparse(link).netloc != domain:  # same-domain only
+                        continue
+                    if link not in visited:
+                        queue.append((link, url_depth + 1))
+        finally:
+            _sleep(_effective_delay(delay, robots, url))
 
     if truncated:
         warnings.warn(

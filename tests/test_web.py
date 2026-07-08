@@ -548,3 +548,54 @@ def test_http_fetch_url_error_raises_web_error(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", _boom)
     with pytest.raises(WebError):
         _http_fetch("https://docs.x.com/a")
+
+
+# ---- politeness: delay on every fetch attempt + robots Crawl-delay ----------
+
+
+def test_crawl_sleeps_after_error_and_non_html_fetches(monkeypatch):
+    # A page full of 404s / PDFs must not trigger rapid-fire requests: the
+    # politeness delay has to run after EVERY fetch attempt, not just successes.
+    sleep_calls: list[float] = []
+    monkeypatch.setattr("corpuslint.sources.web._sleep", lambda d: sleep_calls.append(d))
+    web = _FakeWeb(
+        pages={
+            "https://x.com/": '<a href="/broken">x</a><a href="/doc.pdf">p</a><a href="/ok">y</a>',
+            # /broken absent -> WebError
+            "https://x.com/doc.pdf": ("application/pdf", "%PDF binary"),
+            "https://x.com/ok": "<p>fine</p>",
+        }
+    )
+    with pytest.warns(UserWarning):
+        load_web_crawl("https://x.com/", _crawl_cfg(depth="1"), fetch=web.fetch)
+    # four fetch attempts (start, broken, pdf, ok) -> four sleeps
+    assert len(sleep_calls) == 4
+
+
+def test_crawl_honors_robots_crawl_delay(monkeypatch):
+    # robots.txt Crawl-delay must raise the effective politeness delay above the
+    # (here zero) default rather than being ignored.
+    sleep_calls: list[float] = []
+    monkeypatch.setattr("corpuslint.sources.web._sleep", lambda d: sleep_calls.append(d))
+    web = _FakeWeb(
+        pages={"https://x.com/": "<p>home</p>"},
+        robots={"https://x.com": "User-agent: *\nCrawl-delay: 3"},
+    )
+    load_web_crawl("https://x.com/", _crawl_cfg(depth="0", delay="0"), fetch=web.fetch)
+    assert sleep_calls == [pytest.approx(3.0)]
+
+
+def test_collect_sitemap_urls_delays_between_sitemap_fetches(monkeypatch):
+    # Sitemap-index sub-files must be fetched politely, not back-to-back.
+    sleep_calls: list[float] = []
+    monkeypatch.setattr("corpuslint.sources.web._sleep", lambda d: sleep_calls.append(d))
+    web = _FakeWeb(
+        pages={
+            "https://docs.x.com/sitemap.xml": ("application/xml", _INDEX),
+            "https://docs.x.com/sitemap-1.xml": ("application/xml", _URLSET),
+            "https://docs.x.com/sitemap-2.xml": ("application/xml", _URLSET),
+        }
+    )
+    _collect_sitemap_urls("https://docs.x.com/sitemap.xml", web.fetch, 200, delay=0.5)
+    # "between" three sitemap-file fetches = two polite gaps (none before the first)
+    assert sleep_calls == [pytest.approx(0.5)] * 2
