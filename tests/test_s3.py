@@ -89,6 +89,24 @@ class _FakeS3Client:
         return {"Body": _FakeBody(self.objects[Key])}
 
 
+# Fake botocore exception classes, module-level so a test can build instances to
+# inject as list/get errors before the (lazily created) client exists.
+class _NoCredentialsError(Exception):
+    pass
+
+
+class _BotoCoreError(Exception):
+    pass
+
+
+class _ClientError(Exception):
+    """Mimics botocore ClientError: carries a .response['Error']['Code']."""
+
+    def __init__(self, code: str = "", message: str = ""):
+        super().__init__(message or code or "ClientError")
+        self.response = {"Error": {"Code": code, "Message": message}}
+
+
 # ---- module-under-test import (lazy boto3 => import must always work) --------
 
 from corpuslint.sources.s3 import (  # noqa: E402
@@ -219,15 +237,6 @@ def _install_fake_boto3(monkeypatch, objects=None, **client_kwargs):
     """Inject a fake boto3 + botocore.exceptions so tests never need the real SDK."""
     created: dict = {}
 
-    class _NoCredentialsError(Exception):
-        pass
-
-    class _BotoCoreError(Exception):
-        pass
-
-    class _ClientError(Exception):
-        pass
-
     def _client(service, **kwargs):
         assert service == "s3"
         c = _FakeS3Client(objects, **{**client_kwargs, **kwargs})
@@ -306,6 +315,42 @@ def test_credential_resolution_failure_is_clean_and_leaks_no_secret(monkeypatch)
     msg = str(exc.value)
     assert "credential" in msg.lower()
     assert "super-secret" not in msg
+
+
+def test_credential_error_during_download_surfaces_clean_not_zero_docs(monkeypatch):
+    # A NoCredentialsError raised at get_object time must NOT be swallowed as a
+    # per-object skip (which would yield N warnings + 0 docs). It must abort with
+    # one clean, credential-focused error.
+    no_creds = _NoCredentialsError("Unable to locate credentials")
+    _install_fake_boto3(
+        monkeypatch, objects={"a.md": b"x", "b.md": b"y"}, get_error={"a.md": no_creds}
+    )
+    with pytest.raises(S3Error) as exc:
+        load_s3_documents("bkt", "", _cfg())
+    assert "credential" in str(exc.value).lower()
+
+
+def test_access_denied_during_download_surfaces_clean_naming_credential_chain(monkeypatch):
+    denied = _ClientError(code="AccessDenied", message="Access Denied")
+    _install_fake_boto3(monkeypatch, objects={"a.md": b"x"}, get_error={"a.md": denied})
+    with pytest.raises(S3Error) as exc:
+        load_s3_documents("bkt", "", _cfg())
+    msg = str(exc.value)
+    assert "AccessDenied" in msg
+    # points the user at the credential chain, not a per-object skip
+    assert "credentials" in msg.lower()
+
+
+def test_non_auth_client_error_on_one_object_still_skips_with_warning(monkeypatch):
+    # A per-object failure that is NOT a credential/auth problem (e.g. a single
+    # object vanished mid-run) must still skip-with-warning and keep the rest.
+    missing = _ClientError(code="NoSuchKey", message="The specified key does not exist.")
+    _install_fake_boto3(
+        monkeypatch, objects={"gone.md": b"x", "ok.md": b"kept"}, get_error={"gone.md": missing}
+    )
+    with pytest.warns(UserWarning, match="gone.md"):
+        docs = load_s3_documents("bkt", "", _cfg())
+    assert [d.text for d in docs] == ["kept"]
 
 
 def test_base_import_unaffected_when_boto3_absent(monkeypatch):
