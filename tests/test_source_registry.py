@@ -23,6 +23,11 @@ def test_get_source_returns_web_source():
     assert src.name == "web"
 
 
+def test_get_source_returns_s3_source():
+    src = get_source("s3")
+    assert src.name == "s3"
+
+
 def test_get_source_unknown_raises_listing_valid_names():
     with pytest.raises(UnknownSourceError) as exc:
         get_source("bogus")
