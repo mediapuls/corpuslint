@@ -19,6 +19,7 @@ pip install corpuslint            # core, runs offline and free
 pip install "corpuslint[local]"   # + local embeddings (near-dupes, outliers)
 pip install "corpuslint[llm]"     # + LLM contradiction check (OpenAI / Azure OpenAI)
 pip install "corpuslint[azure]"   # + Azure AI Search source connector
+pip install "corpuslint[mcp]"     # + MCP server (lint a corpus from an AI agent)
 ```
 
 ## Use
@@ -70,6 +71,34 @@ normal chunking + check pipeline. `--content-field` (default `content`) selects 
 field holding the text; `--id-field` (default `id`) selects the id field. Documents
 missing the content field are skipped with a warning.
 
+## MCP server
+Needs the `[mcp]` extra. `corpuslint-mcp` runs a stdio [Model Context
+Protocol](https://modelcontextprotocol.io) server so an AI agent (Claude Desktop,
+etc.) can lint a corpus and get back the Quality Score plus findings.
+
+```bash
+pip install "corpuslint[mcp]"
+corpuslint-mcp        # stdio server; usually launched by the MCP client, not by hand
+```
+
+It exposes one tool, `lint_corpus(path, embedder="local", fail_under=None)`, which
+returns a structured dict: `score`, `total_chunks`, `counts_by_check`,
+`top_offenders`, and `findings`. With `embedder="local"` but the `[local]` extra
+missing, it falls back to `embedder="none"` (semantic checks skipped) and adds a
+`warning` instead of failing.
+
+Claude Desktop config (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "corpuslint": {
+      "command": "corpuslint-mcp"
+    }
+  }
+}
+```
+
 ## Checks
 exact duplicates · near duplicates · low-information chunks · chunk-size
 anomalies · embedding outliers · contradictions (opt-in).
@@ -79,7 +108,7 @@ Optional `.corpuslint.yml` overrides thresholds and check selection.
 
 ## Architecture
 Library-first: `corpuslint.analyze(paths, config) -> Report`. The CLI is a thin
-wrapper; an MCP server, Azure AI Search connector, eval-set generation, and
-drift monitoring are on the roadmap.
+wrapper; the same API backs the CLI, the MCP server, and the Azure AI Search
+connector. Eval-set generation and drift monitoring are on the roadmap.
 
 MIT licensed.
