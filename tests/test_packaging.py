@@ -18,6 +18,13 @@ def test_azure_extra_declares_search_documents():
     assert any(dep.startswith("azure-search-documents") for dep in extras["azure"])
 
 
+def test_s3_extra_declares_boto3():
+    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    extras = data["project"]["optional-dependencies"]
+    assert "s3" in extras
+    assert any(dep.startswith("boto3") for dep in extras["s3"])
+
+
 def test_mcp_extra_declares_mcp_sdk():
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     extras = data["project"]["optional-dependencies"]

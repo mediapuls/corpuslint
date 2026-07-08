@@ -21,7 +21,7 @@ def main(
     ),
     config: str | None = typer.Option(None, "--config"),
     source: str | None = typer.Option(
-        None, "--source", help="files | azure-search | confluence | notion | web (default: files)"
+        None, "--source", help="files | azure-search | confluence | notion | web | s3 (default: files)"
     ),
     index: str | None = typer.Option(None, "--index", help="Azure AI Search index name (with --source azure-search)"),
     content_field: str | None = typer.Option(

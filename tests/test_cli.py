@@ -107,6 +107,56 @@ def test_cli_azure_source_end_to_end_flags_duplicates(monkeypatch):
     assert "duplicate" in result.output.lower()
 
 
+def test_cli_s3_source_end_to_end_flags_duplicates(monkeypatch):
+    """--source s3 with boto3 faked runs the whole pipeline and reports findings."""
+    import sys
+    import types
+
+    objects = {"a.md": b"Refunds take 5 days.", "b.md": b"Refunds take 5 days."}
+
+    class _Body:
+        def __init__(self, data):
+            self._data = data
+
+        def read(self):
+            return self._data
+
+    class _Paginator:
+        def paginate(self, **kwargs):
+            return iter([{"Contents": [{"Key": k} for k in objects]}])
+
+    class _Client:
+        def get_paginator(self, name):
+            return _Paginator()
+
+        def get_object(self, *, Bucket, Key):
+            return {"Body": _Body(objects[Key])}
+
+    boto3_mod = types.ModuleType("boto3")
+    boto3_mod.client = lambda service, **kwargs: _Client()
+    exc_mod = types.ModuleType("botocore.exceptions")
+    exc_mod.NoCredentialsError = type("NoCredentialsError", (Exception,), {})
+    exc_mod.BotoCoreError = type("BotoCoreError", (Exception,), {})
+    exc_mod.ClientError = type("ClientError", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "boto3", boto3_mod)
+    monkeypatch.setitem(sys.modules, "botocore", types.ModuleType("botocore"))
+    monkeypatch.setitem(sys.modules, "botocore.exceptions", exc_mod)
+
+    result = runner.invoke(
+        app, ["--source", "s3", "--source-opt", "bucket=kb", "--embedder", "none"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    assert "duplicate" in result.output.lower()
+
+
+def test_cli_s3_requires_bucket():
+    result = runner.invoke(app, ["--source", "s3", "--embedder", "none"])
+    assert result.exit_code == 1
+    assert "bucket" in result.output.lower()
+    assert "Traceback" not in result.output
+
+
 def test_cli_azure_requires_index(monkeypatch):
     monkeypatch.setattr("corpuslint.sources.azure_search.load_azure_documents", lambda index, cfg: [])
     result = runner.invoke(app, ["--source", "azure-search", "--embedder", "none"])
