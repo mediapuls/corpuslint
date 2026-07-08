@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import sys
@@ -8,6 +9,11 @@ from pathlib import Path
 import pytest
 
 from corpuslint import mcp_server
+
+# The MCP SDK is an optional extra ([mcp]); tests that exercise the real server
+# object skip cleanly when it isn't installed, instead of hard-failing.
+_HAS_MCP = importlib.util.find_spec("mcp") is not None
+requires_mcp = pytest.mark.skipif(not _HAS_MCP, reason="requires the optional [mcp] extra")
 
 _DUPLICATE_PARAGRAPH = (
     "Our refund policy allows customers to request a full refund within thirty days "
@@ -109,6 +115,7 @@ def test_unreadable_path_returns_clean_error(tmp_path: Path):
 # ---- server wiring ----------------------------------------------------------
 
 
+@requires_mcp
 def test_build_server_registers_the_tool():
     server = mcp_server._build_server()
     tool_names = {t.name for t in server._tool_manager.list_tools()}
@@ -142,6 +149,7 @@ def test_importing_mcp_server_does_not_require_mcp(monkeypatch):
 # ---- end-to-end MCP roundtrip (in-memory transport) ------------------------
 
 
+@requires_mcp
 @pytest.mark.anyio
 async def test_e2e_mcp_roundtrip_list_and_call(tmp_path: Path):
     """Full stdio-equivalent roundtrip: connect an in-memory client to the real
