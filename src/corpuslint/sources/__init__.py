@@ -4,6 +4,7 @@ from .confluence import ConfluenceSource  # noqa: F401  (registers confluence)
 from .files import FilesSource  # noqa: F401  (registers files)
 from .notion import NotionSource  # noqa: F401  (registers notion)
 from .s3 import S3Source  # noqa: F401  (registers s3)
+from .sharepoint import SharePointSource  # noqa: F401  (registers sharepoint)
 from .web import WebSource  # noqa: F401  (registers web)
 
 __all__ = [
