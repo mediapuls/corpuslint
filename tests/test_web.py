@@ -392,6 +392,103 @@ def test_strip_fragment_removes_hash():
     assert _strip_fragment("https://x.com/a") == "https://x.com/a"
 
 
+# ---- robots.txt: unreachable/missing → allow-all ---------------------------
+
+
+def test_robots_unreachable_defaults_to_allow_all():
+    """When robots.txt raises WebError the crawler falls back to allow-all so a
+    missing robots file doesn't silently block an explicit crawl."""
+
+    def _fetch(url: str):
+        if url.endswith("/robots.txt"):
+            raise WebError("connection refused")
+        return ("text/html", "<p>page</p>")
+
+    # depth=0 so only the start URL is fetched; if robots defaulted to *deny*
+    # we'd get zero documents.
+    docs = load_web_crawl("https://x.com/", _crawl_cfg(depth="0"), fetch=_fetch)
+    assert len(docs) == 1
+    assert docs[0].source == "https://x.com/"
+
+
+# ---- sitemap mode: max_pages truncation warning -----------------------------
+
+
+def test_sitemap_mode_warns_on_max_pages_truncation():
+    """load_web_sitemap emits a UserWarning (not a silent cut) when the page cap is hit."""
+    big = "".join(f"<url><loc>https://docs.x.com/p{i}</loc></url>" for i in range(20))
+    xml = '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + big + "</urlset>"
+    pages: dict = {"https://docs.x.com/sitemap.xml": ("application/xml", xml)}
+    for i in range(20):
+        pages[f"https://docs.x.com/p{i}"] = "<p>text</p>"
+    web = _FakeWeb(pages=pages)
+    with pytest.warns(UserWarning, match="max_pages"):
+        docs = load_web_sitemap(
+            "https://docs.x.com/sitemap.xml",
+            _sitemap_cfg(max_pages="5"),
+            fetch=web.fetch,
+        )
+    assert len(docs) == 5
+
+
+# ---- politeness delay -------------------------------------------------------
+
+
+def test_crawl_delay_is_invoked(monkeypatch):
+    """_sleep must be called once per fetched page so the polite-crawl contract holds."""
+    sleep_calls: list[float] = []
+    monkeypatch.setattr("corpuslint.sources.web._sleep", lambda d: sleep_calls.append(d))
+    web = _FakeWeb(pages={"https://x.com/": "<p>home</p>"})
+    # depth=0: one page fetched → one sleep
+    load_web_crawl("https://x.com/", _crawl_cfg(depth="0", delay="0.1"), fetch=web.fetch)
+    assert len(sleep_calls) == 1
+    assert sleep_calls[0] == pytest.approx(0.1)
+
+
+def test_sitemap_mode_delay_is_invoked(monkeypatch):
+    """_sleep must be called once per page in sitemap mode."""
+    sleep_calls: list[float] = []
+    monkeypatch.setattr("corpuslint.sources.web._sleep", lambda d: sleep_calls.append(d))
+    web = _FakeWeb(
+        pages={
+            "https://docs.x.com/sitemap.xml": ("application/xml", _URLSET),
+            "https://docs.x.com/a": "<p>one</p>",
+            "https://docs.x.com/b": "<p>two</p>",
+        }
+    )
+    load_web_sitemap("https://docs.x.com/sitemap.xml", _sitemap_cfg(delay="0.3"), fetch=web.fetch)
+    assert len(sleep_calls) == 2
+    assert all(d == pytest.approx(0.3) for d in sleep_calls)
+
+
+# ---- sitemap mode: nested index end-to-end ----------------------------------
+
+
+def test_sitemap_mode_nested_index_fetches_all_pages():
+    """load_web_sitemap follows a sitemapindex all the way through to page Documents."""
+    web = _FakeWeb(
+        pages={
+            "https://docs.x.com/sitemap.xml": ("application/xml", _INDEX),
+            "https://docs.x.com/sitemap-1.xml": ("application/xml", _URLSET),
+            "https://docs.x.com/sitemap-2.xml": (
+                "application/xml",
+                _URLSET.replace("/a", "/c").replace("/b", "/d"),
+            ),
+            "https://docs.x.com/a": "<p>alpha</p>",
+            "https://docs.x.com/b": "<p>bravo</p>",
+            "https://docs.x.com/c": "<p>charlie</p>",
+            "https://docs.x.com/d": "<p>delta</p>",
+        }
+    )
+    docs = load_web_sitemap("https://docs.x.com/sitemap.xml", _sitemap_cfg(), fetch=web.fetch)
+    assert {d.source for d in docs} == {
+        "https://docs.x.com/a",
+        "https://docs.x.com/b",
+        "https://docs.x.com/c",
+        "https://docs.x.com/d",
+    }
+
+
 # ---- HTTP layer -------------------------------------------------------------
 
 
