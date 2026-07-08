@@ -100,7 +100,7 @@ def test_cli_azure_source_end_to_end_flags_duplicates(monkeypatch):
         Document(text="Refunds take 5 days.", source="azure-search://kb/1"),
         Document(text="Refunds take 5 days.", source="azure-search://kb/2"),
     ]
-    monkeypatch.setattr("corpuslint.cli.load_azure_documents", lambda index, cfg: docs)
+    monkeypatch.setattr("corpuslint.sources.azure_search.load_azure_documents", lambda index, cfg: docs)
     result = runner.invoke(app, ["--source", "azure-search", "--index", "kb", "--embedder", "none"])
     assert result.exit_code == 0, result.output
     assert "Traceback" not in result.output
@@ -108,7 +108,7 @@ def test_cli_azure_source_end_to_end_flags_duplicates(monkeypatch):
 
 
 def test_cli_azure_requires_index(monkeypatch):
-    monkeypatch.setattr("corpuslint.cli.load_azure_documents", lambda index, cfg: [])
+    monkeypatch.setattr("corpuslint.sources.azure_search.load_azure_documents", lambda index, cfg: [])
     result = runner.invoke(app, ["--source", "azure-search", "--embedder", "none"])
     assert result.exit_code != 0
     assert "index" in result.output.lower()
@@ -119,7 +119,7 @@ def test_cli_azure_connector_error_is_clean(monkeypatch):
     def _boom(index, cfg):
         raise AzureSearchError("AZURE_SEARCH_ENDPOINT is not set.")
 
-    monkeypatch.setattr("corpuslint.cli.load_azure_documents", _boom)
+    monkeypatch.setattr("corpuslint.sources.azure_search.load_azure_documents", _boom)
     result = runner.invoke(app, ["--source", "azure-search", "--index", "kb", "--embedder", "none"])
     assert result.exit_code == 1
     assert "AZURE_SEARCH_ENDPOINT" in result.output
@@ -135,7 +135,7 @@ def test_cli_azure_forwards_field_config(monkeypatch):
         captured["id_field"] = cfg.id_field
         return [Document(text="hi", source="azure-search://kb/1")]
 
-    monkeypatch.setattr("corpuslint.cli.load_azure_documents", _capture)
+    monkeypatch.setattr("corpuslint.sources.azure_search.load_azure_documents", _capture)
     result = runner.invoke(
         app,
         [
@@ -156,9 +156,106 @@ def test_cli_files_source_requires_paths():
     assert "Traceback" not in result.output
 
 
+def test_cli_source_opt_parses_into_config(monkeypatch):
+    """--source-opt key=value (repeatable) is parsed into cfg.source_options."""
+    captured: dict = {}
+
+    def _capture(index, cfg):
+        captured["source_options"] = dict(cfg.source_options)
+        captured["index"] = index
+        return [Document(text="hi", source="azure-search://kb/1")]
+
+    monkeypatch.setattr("corpuslint.sources.azure_search.load_azure_documents", _capture)
+    result = runner.invoke(
+        app,
+        [
+            "--source", "azure-search",
+            "--source-opt", "index=kb",
+            "--source-opt", "content_field=body",
+            "--embedder", "none",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["source_options"] == {"index": "kb", "content_field": "body"}
+
+
+def test_cli_azure_reads_index_from_source_opt(monkeypatch):
+    """A source reads its option from cfg.source_options: azure gets its index there."""
+    captured: dict = {}
+
+    def _capture(index, cfg):
+        captured["index"] = index
+        return [Document(text="hi", source="azure-search://kb/1")]
+
+    monkeypatch.setattr("corpuslint.sources.azure_search.load_azure_documents", _capture)
+    result = runner.invoke(
+        app, ["--source", "azure-search", "--source-opt", "index=kb", "--embedder", "none"]
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["index"] == "kb"
+
+
+def test_cli_unknown_source_is_clean():
+    result = runner.invoke(app, ["--source", "bogus", "--embedder", "none"])
+    assert result.exit_code != 0
+    assert "bogus" in result.output.lower()
+    assert "files" in result.output.lower()
+    assert "Traceback" not in result.output
+
+
 def test_cli_json_output_and_fail_under(tmp_path: Path):
     (tmp_path / "a.md").write_text("Cats are great pets.")
     (tmp_path / "b.md").write_text("Cats are great pets.")
     result = runner.invoke(app, [str(tmp_path), "--embedder", "none", "--json", "--fail-under", "100"])
     assert result.exit_code == 1  # duplicates drop score below 100
     assert '"score"' in result.stdout
+
+
+def test_cli_source_opt_no_equals_is_clean_error():
+    """--source-opt without '=' must produce a descriptive error, not a traceback."""
+    result = runner.invoke(app, ["--source", "azure-search", "--source-opt", "justkey", "--embedder", "none"])
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "key=value" in result.output.lower() or "justkey" in result.output.lower()
+
+
+def test_cli_source_opt_empty_key_is_clean_error():
+    """--source-opt =value (empty key) must produce a descriptive error, not a
+    traceback, and must not insert a "" key into source_options."""
+    result = runner.invoke(app, ["--source", "azure-search", "--source-opt", "=value", "--embedder", "none"])
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "empty" in result.output.lower() and "key" in result.output.lower()
+
+
+def test_cli_source_opt_value_with_equals_is_accepted(monkeypatch):
+    """--source-opt a=b=c must parse as key='a', value='b=c' (split on first '=' only)."""
+    captured: dict = {}
+
+    def _capture(index, cfg):
+        captured["source_options"] = dict(cfg.source_options)
+        return [Document(text="hi", source="azure-search://kb/1")]
+
+    monkeypatch.setattr("corpuslint.sources.azure_search.load_azure_documents", _capture)
+    result = runner.invoke(
+        app,
+        ["--source", "azure-search", "--index", "kb", "--source-opt", "url=https://example.com/path=1", "--embedder", "none"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["source_options"]["url"] == "https://example.com/path=1"
+
+
+def test_cli_jsonl_fast_path_finds_duplicates(tmp_path: Path):
+    """Passing a .jsonl file to the CLI (--source files) must use the pre-chunked
+    fast-path — duplicates in the .jsonl must be detected, proving the file was
+    read via load_prechunked_jsonl, not skipped."""
+    import json as _json
+    jl = tmp_path / "chunks.jsonl"
+    jl.write_text(
+        _json.dumps({"id": "c1", "text": "Refunds take five business days.", "source": "kb/1"}) + "\n"
+        + _json.dumps({"id": "c2", "text": "Refunds take five business days.", "source": "kb/2"}) + "\n"
+    )
+    result = runner.invoke(app, [str(jl), "--embedder", "none"])
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    assert "duplicate" in result.output.lower()

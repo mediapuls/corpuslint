@@ -9,7 +9,7 @@ from .config import load_config
 from .embedder import get_embedder
 from .llm_clients import LLMClientError, get_llm_client
 from .report import render_html, render_json, render_terminal
-from .sources.azure_search import AzureSearchError, load_azure_documents
+from .sources import SourceError, UnknownSourceError, get_source
 
 app = typer.Typer(add_completion=False, help="A linter for your RAG knowledge base.")
 
@@ -29,6 +29,11 @@ def main(
     ),
     id_field: str | None = typer.Option(
         None, "--id-field", help="Azure field holding the document id (default: id)"
+    ),
+    source_opt: list[str] = typer.Option(
+        None,
+        "--source-opt",
+        help="generic source option as key=value (repeatable), e.g. --source-opt index=kb",
     ),
     embedder: str = typer.Option("local", "--embedder", help="local | none"),
     llm: bool = typer.Option(False, "--llm", help="enable the LLM contradiction check"),
@@ -58,6 +63,19 @@ def main(
         cfg.content_field = content_field
     if id_field is not None:
         cfg.id_field = id_field
+    cfg.paths = list(paths) if paths else []
+    for item in source_opt or []:
+        if "=" not in item:
+            raise typer.BadParameter(
+                f"expected key=value, got {item!r}", param_hint="--source-opt"
+            )
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise typer.BadParameter(
+                f"empty option key in {item!r}", param_hint="--source-opt"
+            )
+        cfg.source_options[key] = value.strip()
 
     llm_client = None
     if llm:
@@ -80,26 +98,25 @@ def main(
 
     emb = get_embedder(embedder, cfg)
 
-    if cfg.source == "azure-search":
-        if not cfg.index:
-            raise typer.BadParameter(
-                "--index is required with --source azure-search", param_hint="--index"
-            )
+    try:
+        src = get_source(cfg.source)
+    except UnknownSourceError as e:
+        raise typer.BadParameter(str(e), param_hint="--source") from e
+
+    if cfg.source == "files":
+        # Keep the files fast-path on the paths route so pre-chunked .jsonl inputs
+        # flow straight through the pipeline (FilesSource loads documents only).
+        if not cfg.paths:
+            raise typer.BadParameter("provide files or directories to check (or use --source azure-search)")
+        report = analyze(cfg.paths, cfg, embedder=emb, llm=llm_client)
+    else:
         try:
-            documents = load_azure_documents(cfg.index, cfg)
-        except AzureSearchError as e:
-            # Missing extra / env var / SDK failure is a config problem, not a bad CLI argument.
+            documents = src.load(cfg)
+        except SourceError as e:
+            # Missing option / extra / env var / SDK failure is a config problem, not a bad CLI argument.
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(1) from e
         report = analyze([], cfg, embedder=emb, llm=llm_client, documents=documents)
-    elif cfg.source == "files":
-        if not paths:
-            raise typer.BadParameter("provide files or directories to check (or use --source azure-search)")
-        report = analyze(paths, cfg, embedder=emb, llm=llm_client)
-    else:
-        raise typer.BadParameter(
-            f"unknown source {cfg.source!r} (expected 'files' or 'azure-search')", param_hint="--source"
-        )
 
     if json_out:
         typer.echo(render_json(report))
