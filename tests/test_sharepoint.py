@@ -369,6 +369,16 @@ def test_html_file_is_run_through_the_html_extractor():
     assert "<h1>" not in docs[0].text
 
 
+def test_htm_file_is_run_through_the_html_extractor():
+    # .htm must be treated identically to .html — both are in HTML_EXTS.
+    tree = {_ROOT: [_file_item("notice.htm", "f1", web_url="https://c.sharepoint.com/notice.htm")]}
+    bodies = {"f1": b"<h2>Notice</h2><p>Please read carefully.</p>"}
+    drive = _FakeDrive(tree, bodies)
+    docs = _documents_from_drive(_BASE, _ROOT, drive.get_json, drive.download, _cfg())
+    assert docs[0].text == "Notice Please read carefully."
+    assert "<h2>" not in docs[0].text
+
+
 def test_file_without_weburl_falls_back_to_sharepoint_scheme():
     tree = {_ROOT: [_file_item("g.md", "item-42")]}  # no webUrl
     drive = _FakeDrive(tree, {"item-42": b"body"})
