@@ -204,6 +204,59 @@ read from `--source-opt` or `.corpuslint.yml`, so no secret lands in config. If
 boto3 can't resolve credentials the connector fails with a clean, secret-free
 error.
 
+### SharePoint / OneDrive
+Reads documents out of a SharePoint site's document library (or any drive
+reachable through it) via Microsoft Graph. Stdlib-only — **no extra to install**.
+
+**App registration (one-time).** Create an app registration in Entra ID (Azure
+AD), add the **Application** permission `Sites.Read.All` under Microsoft Graph,
+and have an admin **grant admin consent**. Create a client secret. This is
+app-only (daemon) access — no signed-in user.
+
+```bash
+# Credentials come from the environment (standard Microsoft variable names):
+export AZURE_TENANT_ID=<directory (tenant) id>
+export AZURE_CLIENT_ID=<application (client) id>
+export AZURE_CLIENT_SECRET=<client secret value>
+
+# Point at a site by hostname + server-relative path:
+corpuslint --source sharepoint \
+  --source-opt site=contoso.sharepoint.com:/sites/Engineering
+
+# Scope to a subfolder of the default library:
+corpuslint --source sharepoint \
+  --source-opt site=contoso.sharepoint.com:/sites/Engineering \
+  --source-opt folder=Policies/HR
+
+# Or address a site / drive by id directly:
+corpuslint --source sharepoint --source-opt site_id=<id> --source-opt drive_id=<id>
+```
+
+| `--source-opt` | Default | Meaning |
+|---|---|---|
+| `site` | — (required¹) | site as `<hostname>:/sites/<path>` |
+| `site_id` | — (required¹) | resolved Graph site id (skips site lookup) |
+| `drive_id` | site's default library | address a specific document library/drive |
+| `folder` | drive root | only walk this folder (server-relative path) |
+
+¹ one of `site` or `site_id` is required.
+
+It authenticates with the OAuth2 **client-credentials** flow (app-only token),
+resolves the site, then walks the drive from the root (or `folder`): it recurses
+into **every** folder (bounded depth) and follows Graph's `@odata.nextLink`
+paging on each listing, so nothing is silently capped. For each file with a
+supported extension (`.md`, `.txt`, `.html`, `.htm`) it downloads the bytes and
+runs them through the same parsers used for local files, mapping each to a
+document whose source is the file's `webUrl`. Files with any other extension
+(images, PDFs, Office binaries, archives) are skipped without a download. A
+per-file download or parse error skips that file with a warning and the run
+continues.
+
+**Credentials** are read only from the three environment variables above —
+**never** from `--source-opt` or `.corpuslint.yml`, so no secret lands in config.
+A missing variable, a rejected token request, or a denied Graph call fails with a
+clean, secret-free error.
+
 ### Source options
 
 Every source reads its settings from a generic bag, so no source needs its own

@@ -157,6 +157,52 @@ def test_cli_s3_requires_bucket():
     assert "Traceback" not in result.output
 
 
+def test_cli_sharepoint_source_end_to_end_flags_duplicates(monkeypatch):
+    """--source sharepoint with Graph HTTP faked runs the whole pipeline and reports findings."""
+    monkeypatch.setenv("AZURE_TENANT_ID", "t")
+    monkeypatch.setenv("AZURE_CLIENT_ID", "c")
+    monkeypatch.setenv("AZURE_CLIENT_SECRET", "s")
+    monkeypatch.setattr("corpuslint.sources.sharepoint._get_access_token", lambda t, c, s: "tok")
+    monkeypatch.setattr("corpuslint.sources.sharepoint._resolve_site_id", lambda site, token: "site-1")
+
+    root = "https://graph.microsoft.com/v1.0/sites/site-1/drive/root/children"
+
+    def fake_get_json(url, token):
+        if url.split("?")[0] == root:
+            return {
+                "value": [
+                    {"id": "f1", "name": "a.md", "file": {}, "webUrl": "https://c.sharepoint.com/a.md"},
+                    {"id": "f2", "name": "b.md", "file": {}, "webUrl": "https://c.sharepoint.com/b.md"},
+                ]
+            }
+        return {"value": []}
+
+    monkeypatch.setattr("corpuslint.sources.sharepoint._graph_get_json", fake_get_json)
+    monkeypatch.setattr("corpuslint.sources.sharepoint._graph_get", lambda url, token: b"Refunds take 5 days.")
+
+    result = runner.invoke(
+        app,
+        [
+            "--source",
+            "sharepoint",
+            "--source-opt",
+            "site=contoso.sharepoint.com:/sites/Eng",
+            "--embedder",
+            "none",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    assert "duplicate" in result.output.lower()
+
+
+def test_cli_sharepoint_requires_site():
+    result = runner.invoke(app, ["--source", "sharepoint", "--embedder", "none"])
+    assert result.exit_code == 1
+    assert "site" in result.output.lower()
+    assert "Traceback" not in result.output
+
+
 def test_cli_azure_requires_index(monkeypatch):
     monkeypatch.setattr("corpuslint.sources.azure_search.load_azure_documents", lambda index, cfg: [])
     result = runner.invoke(app, ["--source", "azure-search", "--embedder", "none"])
