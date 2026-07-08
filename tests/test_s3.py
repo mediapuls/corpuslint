@@ -184,6 +184,34 @@ def test_per_object_warning_does_not_leak_secret_from_error_text():
     assert not any("SECRET-LEAK-123" in str(w.message) for w in record)
 
 
+def test_temp_file_cleaned_up_even_on_parse_error(monkeypatch):
+    """The finally block in _document_for_key removes the temp file even when
+    load_documents raises (e.g. an unsupported or corrupt file the parser rejects).
+    The object is then skipped-with-warning like any other per-object failure."""
+    import corpuslint.sources.s3 as s3_mod
+
+    unlinked: list[str] = []
+    real_unlink = s3_mod.os.unlink
+
+    def tracking_unlink(path):
+        unlinked.append(path)
+        real_unlink(path)
+
+    monkeypatch.setattr(s3_mod.os, "unlink", tracking_unlink)
+    monkeypatch.setattr(s3_mod, "load_documents", lambda paths, cfg: (_ for _ in ()).throw(RuntimeError("parser exploded")))
+
+    client = _FakeS3Client({"x.md": b"data"})
+    with pytest.warns(UserWarning, match="x.md"):
+        docs = _documents_from_client(client, "bkt", "", _cfg())
+
+    assert docs == []
+    # unlink was called exactly once (the finally block ran)
+    assert len(unlinked) == 1
+    # and the file is genuinely gone
+    import os as _os
+    assert not _os.path.exists(unlinked[0])
+
+
 # ---- load_s3_documents: boto3 wiring (fake SDK) -----------------------------
 
 
