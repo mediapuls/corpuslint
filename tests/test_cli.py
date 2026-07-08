@@ -168,7 +168,7 @@ def test_cli_sharepoint_source_end_to_end_flags_duplicates(monkeypatch):
     root = "https://graph.microsoft.com/v1.0/sites/site-1/drive/root/children"
 
     def fake_get_json(url, token):
-        if url == root:
+        if url.split("?")[0] == root:
             return {
                 "value": [
                     {"id": "f1", "name": "a.md", "file": {}, "webUrl": "https://c.sharepoint.com/a.md"},

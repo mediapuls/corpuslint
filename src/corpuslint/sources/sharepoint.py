@@ -36,6 +36,18 @@ _SUPPORTED_EXTS = TEXT_EXTS | HTML_EXTS
 # deep are not real, so bounding here is safe and keeps traversal terminating.
 _MAX_DEPTH = 64
 
+# Fields requested on every children listing. @microsoft.graph.downloadUrl is the
+# important one: it carries a short-lived, pre-authenticated download URL so files
+# can be fetched WITHOUT re-sending the bearer token (see _download_item). The rest
+# are the facets/fields the traversal actually reads.
+_LIST_SELECT = "id,name,file,folder,webUrl,@microsoft.graph.downloadUrl"
+
+
+def _with_select(url: str) -> str:
+    """Append the ``$select`` (incl. the download-URL annotation) to a listing URL."""
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}$select={_LIST_SELECT}"
+
 
 class SharePointError(SourceError):
     """Raised when the SharePoint source cannot run (missing creds/site, HTTP failure)."""
@@ -137,6 +149,39 @@ def _graph_get_json(url: str, token: str) -> dict:
     return json.loads(_graph_get(url, token).decode("utf-8"))
 
 
+def _graph_get_plain(url: str) -> bytes:
+    """GET a pre-authenticated URL with NO Authorization header.
+
+    Used for a driveItem's ``@microsoft.graph.downloadUrl``, which already carries
+    its own short-lived auth. Sending the bearer token here is not just redundant —
+    strict tenants reject a request to their storage backend that still bears an
+    ``Authorization`` header, so the token must be omitted.
+    """
+    request = urllib.request.Request(url)  # deliberately no Authorization header
+    try:
+        with urllib.request.urlopen(request) as response:
+            return response.read()
+    except urllib.error.HTTPError as e:
+        raise SharePointError(f"file download failed with HTTP {e.code}.") from e
+    except urllib.error.URLError as e:
+        raise SharePointError(f"could not download file: {e.reason}") from e
+
+
+def _download_item(item: dict, drive_base: str, token: str) -> bytes:
+    """Fetch a file item's bytes, preferring its pre-authed download URL.
+
+    When Graph returns ``@microsoft.graph.downloadUrl`` (it does for files listed
+    with the ``$select`` above), download from it directly with no bearer token —
+    this avoids urllib re-sending ``Authorization`` across the 302 redirect that
+    ``/items/{id}/content`` issues, which strict tenants reject. Items lacking the
+    annotation fall back to the authenticated ``/content`` route.
+    """
+    download_url = item.get("@microsoft.graph.downloadUrl")
+    if download_url:
+        return _graph_get_plain(download_url)
+    return _graph_get(f"{drive_base}/items/{item['id']}/content", token)
+
+
 def _resolve_site_id(site: str, token: str) -> str:
     """Resolve a ``hostname:/sites/path`` site descriptor to its Graph site id.
 
@@ -181,9 +226,11 @@ def _iter_children(list_url: str, get_json: Callable[[str], dict]):
 
     Graph pages large folders; each response carries a ``value`` array and, when
     more remain, an absolute ``@odata.nextLink``. Following it to exhaustion means
-    the whole folder is enumerated with no silent cap.
+    the whole folder is enumerated with no silent cap. The first request carries
+    the ``$select`` (so files come back with their download URL); the nextLink from
+    Graph already preserves it, so it is followed verbatim.
     """
-    url: str | None = list_url
+    url: str | None = _with_select(list_url)
     while url:
         data = get_json(url)
         yield from data.get("value", [])
@@ -219,7 +266,7 @@ def _documents_from_drive(
     drive_base: str,
     start_url: str,
     get_json: Callable[[str], dict],
-    download: Callable[[str], bytes],
+    download: Callable[[dict], bytes],
     config: Config,
     max_depth: int = _MAX_DEPTH,
 ) -> list[Document]:
@@ -246,14 +293,14 @@ def _documents_from_drive(
 
 
 def _collect_file(
-    item: dict, download: Callable[[str], bytes], config: Config, docs: list[Document]
+    item: dict, download: Callable[[dict], bytes], config: Config, docs: list[Document]
 ) -> None:
     """Download and parse one file item, appending a Document (or skip-with-warning)."""
     name = item.get("name", "")
     if Path(name).suffix.lower() not in _SUPPORTED_EXTS:
         return
     try:
-        body = download(item["id"])
+        body = download(item)
         doc = _parse_item_bytes(body, Path(name).suffix.lower(), config)
     except Exception as e:  # noqa: BLE001 - one bad file must not abort the run
         warnings.warn(
@@ -278,15 +325,26 @@ def load_sharepoint_documents(config: Config) -> list[Document]:
     token = _get_access_token(tenant_id, client_id, client_secret)
 
     opts = config.source_options
-    site_id = opts.get("site_id") or _resolve_site_id(opts["site"], token)
+    # An explicit site_id wins; otherwise resolve from the site descriptor. Guard
+    # the fall-through so an empty site_id with no site is a clean error, not a
+    # KeyError on opts["site"].
+    site_id = opts.get("site_id")
+    if not site_id:
+        site = opts.get("site")
+        if not site:
+            raise SharePointError(
+                "the sharepoint source requires a site or site_id "
+                "(pass --source-opt site=<hostname>:/sites/<path> or --source-opt site_id=<id>)"
+            )
+        site_id = _resolve_site_id(site, token)
     drive_base = _drive_base(site_id, opts.get("drive_id"))
     start_url = _start_url(drive_base, opts.get("folder"))
 
     def get_json(url: str) -> dict:
         return _graph_get_json(url, token)
 
-    def download(item_id: str) -> bytes:
-        return _graph_get(f"{drive_base}/items/{item_id}/content", token)
+    def download(item: dict) -> bytes:
+        return _download_item(item, drive_base, token)
 
     docs = _documents_from_drive(drive_base, start_url, get_json, download, config)
     # Report on stderr (keeps stdout/--json clean) to back the "no silent cap" claim.

@@ -13,6 +13,7 @@ from corpuslint.sources.sharepoint import (
     SharePointError,
     SharePointSource,
     _documents_from_drive,
+    _download_item,
     _drive_base,
     _get_access_token,
     _graph_get,
@@ -69,8 +70,10 @@ class _FakeDrive:
         self.downloaded: list[str] = []
 
     def get_json(self, url: str) -> dict:
-        # Strip a paging marker of the form "<base>#<offset>" the fake adds itself.
-        base, _, marker = url.partition("#")
+        # Drop the connector's ``$select`` query so tree keys stay path-only, then
+        # strip a paging marker of the form "<base>#<offset>" the fake adds itself.
+        path = url.split("?", 1)[0]
+        base, _, marker = path.partition("#")
         self.listed_urls.append(base)
         items = self.tree.get(base, [])
         start = int(marker) if marker else 0
@@ -81,9 +84,9 @@ class _FakeDrive:
             out["@odata.nextLink"] = f"{base}#{nxt}"
         return out
 
-    def download(self, item_id: str) -> bytes:
-        self.downloaded.append(item_id)
-        return self.bodies[item_id]
+    def download(self, item: dict) -> bytes:
+        self.downloaded.append(item["id"])
+        return self.bodies[item["id"]]
 
 
 # ---- credentials ------------------------------------------------------------
@@ -244,6 +247,61 @@ def test_graph_get_error_does_not_leak_token(monkeypatch):
     assert "super-secret-token" not in str(exc.value)
 
 
+# ---- file download routing (downloadUrl vs /content) ------------------------
+
+
+def test_file_with_download_url_is_fetched_without_auth_header(monkeypatch):
+    # The pre-authed @microsoft.graph.downloadUrl must be fetched with a PLAIN
+    # request: strict tenants reject the storage request if it still bears the
+    # bearer token (which urllib would otherwise re-send across the 302 redirect).
+    captured: dict = {}
+
+    def _fake_urlopen(request):
+        captured["url"] = request.full_url
+        captured["headers"] = dict(request.headers)
+        return _Resp(b"pre-authed-bytes")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    item = {
+        "id": "f1",
+        "name": "a.md",
+        "file": {},
+        "@microsoft.graph.downloadUrl": "https://storage.example/pre-authed?tempauth=xyz",
+    }
+    body = _download_item(item, "https://graph.microsoft.com/v1.0/sites/s/drive", "bearer-tok")
+    assert body == b"pre-authed-bytes"
+    assert captured["url"] == "https://storage.example/pre-authed?tempauth=xyz"
+    assert "Authorization" not in captured["headers"]
+
+
+def test_file_without_download_url_falls_back_to_content_with_auth(monkeypatch):
+    # No annotation -> the authenticated /items/{id}/content route, WITH the bearer.
+    captured: dict = {}
+
+    def _fake_urlopen(request):
+        captured["url"] = request.full_url
+        captured["headers"] = dict(request.headers)
+        return _Resp(b"content-bytes")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    item = {"id": "f9", "name": "b.md", "file": {}}  # no downloadUrl annotation
+    body = _download_item(item, "https://graph.microsoft.com/v1.0/sites/s/drive", "bearer-tok")
+    assert body == b"content-bytes"
+    assert captured["url"].endswith("/items/f9/content")
+    assert captured["headers"].get("Authorization") == "Bearer bearer-tok"
+
+
+def test_download_url_fetch_failure_is_clean_error(monkeypatch):
+    def _boom(request):
+        raise _make_http_error(410, "Gone")  # pre-authed URLs expire quickly
+
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    item = {"id": "f1", "name": "a.md", "file": {}, "@microsoft.graph.downloadUrl": "https://storage.example/x"}
+    with pytest.raises(SharePointError) as exc:
+        _download_item(item, "BASE", "tok")
+    assert "410" in str(exc.value)
+
+
 # ---- site resolution --------------------------------------------------------
 
 
@@ -296,6 +354,19 @@ _ROOT = f"{_BASE}/root/children"
 
 def _children_url(item_id: str) -> str:
     return f"{_BASE}/items/{item_id}/children"
+
+
+def test_listings_request_the_download_url_annotation():
+    # Every listing must $select @microsoft.graph.downloadUrl so files come back
+    # with a pre-authed URL (enabling the no-bearer download path).
+    requested: list[str] = []
+
+    def get_json(url):
+        requested.append(url)
+        return {"value": []}
+
+    _documents_from_drive(_BASE, _ROOT, get_json, lambda item: b"", _cfg())
+    assert requested and all("@microsoft.graph.downloadUrl" in u for u in requested)
 
 
 def test_traversal_recurses_folders_and_parses_supported_files():
@@ -400,7 +471,7 @@ def test_recursion_depth_is_bounded_on_pathological_nesting():
             self.calls += 1
             return {"value": [_folder_item("loop", "loop")]}
 
-        def download(self, item_id):  # pragma: no cover - no files in the loop
+        def download(self, item):  # pragma: no cover - no files in the loop
             raise AssertionError("no files to download")
 
     loop = _Loop()
@@ -415,10 +486,10 @@ def test_per_file_download_error_skips_with_warning_others_kept():
     bodies = {"f1": b"first", "f3": b"second"}
 
     class _Drive(_FakeDrive):
-        def download(self, item_id):
-            if item_id == "f2":
+        def download(self, item):
+            if item["id"] == "f2":
                 raise OSError("connection reset")
-            return super().download(item_id)
+            return super().download(item)
 
     drive = _Drive(tree, bodies)
     with pytest.warns(UserWarning, match="boom.md"):
@@ -430,7 +501,7 @@ def test_per_file_warning_does_not_leak_secret_from_error_text():
     tree = {_ROOT: [_file_item("x.md", "f1")]}
 
     class _Drive(_FakeDrive):
-        def download(self, item_id):
+        def download(self, item):
             raise OSError("token=SECRET-LEAK-123")
 
     drive = _Drive(tree, {})
@@ -484,7 +555,7 @@ def test_load_resolves_site_walks_drive_and_reports_count(monkeypatch, capsys):
 
     def fake_get_json(url, token):
         assert token == "tok"
-        if url == root:
+        if url.split("?")[0] == root:
             return {"value": [_file_item("a.md", "f1", web_url="https://c.sharepoint.com/a.md")]}
         return {"value": []}
 
@@ -509,7 +580,9 @@ def test_load_uses_site_id_without_resolving(monkeypatch):
     root = "https://graph.microsoft.com/v1.0/sites/given-site/drive/root/children"
     monkeypatch.setattr(
         "corpuslint.sources.sharepoint._graph_get_json",
-        lambda url, token: {"value": [_file_item("a.md", "f1")]} if url == root else {"value": []},
+        lambda url, token: {"value": [_file_item("a.md", "f1")]}
+        if url.split("?")[0] == root
+        else {"value": []},
     )
     monkeypatch.setattr("corpuslint.sources.sharepoint._graph_get", lambda url, token: b"body")
     docs = load_sharepoint_documents(_cfg(source_options={"site_id": "given-site"}))
@@ -527,6 +600,16 @@ def test_load_missing_credential_raises_before_any_network(monkeypatch):
     with pytest.raises(SharePointError) as exc:
         load_sharepoint_documents(_cfg(source_options={"site_id": "s"}))
     assert "AZURE_CLIENT_SECRET" in str(exc.value)
+
+
+def test_load_empty_site_id_without_site_raises_clean_error(monkeypatch):
+    # An empty --source-opt site_id= is falsy; without a site it must be a clean
+    # SharePointError, not a KeyError on opts["site"].
+    _set_creds(monkeypatch)
+    monkeypatch.setattr("corpuslint.sources.sharepoint._get_access_token", lambda t, c, s: "tok")
+    with pytest.raises(SharePointError) as exc:
+        load_sharepoint_documents(_cfg(source_options={"site_id": ""}))
+    assert "site" in str(exc.value)
 
 
 # ---- SharePointSource: options resolution -----------------------------------
@@ -547,7 +630,7 @@ def test_source_reads_site_from_options(monkeypatch):
     monkeypatch.setattr(
         "corpuslint.sources.sharepoint._graph_get_json",
         lambda url, token: {"value": [_file_item("a.md", "f1", web_url="https://c/a.md")]}
-        if url == root
+        if url.split("?")[0] == root
         else {"value": []},
     )
     monkeypatch.setattr("corpuslint.sources.sharepoint._graph_get", lambda url, token: b"x")
@@ -563,7 +646,7 @@ def test_source_scopes_to_drive_id_and_folder(monkeypatch):
 
     def fake_get_json(url, token):
         seen.setdefault("urls", []).append(url)
-        return {"value": [_file_item("a.md", "f1")]} if url == start else {"value": []}
+        return {"value": [_file_item("a.md", "f1")]} if url.split("?")[0] == start else {"value": []}
 
     monkeypatch.setattr("corpuslint.sources.sharepoint._graph_get_json", fake_get_json)
     monkeypatch.setattr("corpuslint.sources.sharepoint._graph_get", lambda url, token: b"x")
@@ -571,7 +654,7 @@ def test_source_scopes_to_drive_id_and_folder(monkeypatch):
         _cfg(source_options={"site_id": "s", "drive_id": "drive-9", "folder": "Policies"})
     )
     assert len(docs) == 1
-    assert start in seen["urls"]
+    assert start in [u.split("?")[0] for u in seen["urls"]]
 
 
 # ---- registry ---------------------------------------------------------------
